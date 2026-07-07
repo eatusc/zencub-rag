@@ -423,6 +423,23 @@ export function SearchClient() {
 
           <section className="schema-grid">
             <div className="explain-panel">
+              <p className="section-kicker">Embedding vectors</p>
+              <h3>Meaning fingerprints for transcript chunks</h3>
+              <p className="plain-copy">
+                An embedding vector is a long list of numbers created from text. Similar ideas land near each other mathematically, so a search for "stop the pass" can find chunks that say "guard retention" or "recover inside position."
+              </p>
+            </div>
+            <div className="explain-panel">
+              <p className="section-kicker">Backfill job</p>
+              <h3>What the 256 embedded chunks are</h3>
+              <p className="plain-copy">
+                The job reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding`. Only 256 of 12,104 chunks are embedded right now, so vector search is still partial.
+              </p>
+            </div>
+          </section>
+
+          <section className="schema-grid">
+            <div className="explain-panel">
               <p className="section-kicker">Define it simply</p>
               <h3>RAG = retrieve evidence, then generate from it</h3>
               <p className="plain-copy">

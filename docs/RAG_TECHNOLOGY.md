@@ -91,6 +91,8 @@ The raw transcript table stores full transcript segment arrays. That is too larg
 
 Text search finds matching words. Vector search finds matching meaning.
 
+An embedding vector is a numeric representation of a transcript chunk. The model turns text into a long list of numbers, and chunks with similar meaning end up close together in vector search.
+
 Example:
 
 ```text
@@ -98,6 +100,8 @@ Query: how do I stop someone turning into me after a pass?
 ```
 
 Text search may miss good clips if the transcript says "crossface", "underhook", or "pin the shoulders" instead. Embeddings make those conceptually related chunks retrievable.
+
+The backfill process reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding` with `embedded_at` and `embedding_model`. TEST currently has 256 embedded chunks and 11,848 chunks still missing vectors.
 
 ## Good Queries To Test
 
