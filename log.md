@@ -55,3 +55,9 @@ Added hover/focus tooltips to Search, Semantic Search, and Ask explaining keywor
 Researched common BJJ move/search terms from public technique/submission lists, then expanded the evaluated query bank from 9 to 19 examples. Added `rear naked choke`, `armbar`, `triangle choke`, `arm triangle`, `ankle lock`, `heel hook`, `mount escape`, `closed guard pass`, `bow and arrow choke`, and `omoplata` to `src/lib/ragExamples.ts`. Re-ran `npm run eval:queries`: 19/19 passed and regenerated `docs/evals/rag-search-eval.md/json`.
 
 Ran normal Search vs Semantic Search comparisons for concept queries and saved findings in `docs/evals/rag-semantic-comparison.md`. Best semantic wins: `how do I stop someone passing my guard` found Danaher guard retention, `escape heavy mount pressure` avoided match-commentary drift, and `finish a choke from the back` found a focused rear-naked-choke clip. Remaining semantic weakness: some defensive/ambiguous phrasing still needs hybrid ranking/full embedding coverage.
+
+## 2026-07-07
+
+Ran another TEST embedding pass with `npm run embed:chunks -- --limit=4096 --apply`. It embedded 2,944 additional chunks before the next batch load hit a Supabase statement timeout. Coverage is now 7,296 embedded chunks out of 12,104; 4,808 remain missing vectors. Updated System Map, README, architecture, RAG technology notes, next steps, and semantic comparison docs with the new counts.
+
+Hardened `scripts/embed-rag-chunks.ts` after the timeout: removed the `created_at` sort from the missing-embedding batch select and added retry/backoff for transient load timeouts. Re-ran testing after the new embeddings: `npm run eval:queries` still passed 19/19. Focused Semantic/Ask sweep for the 10 newly added common-move queries also passed 10/10 with cited Ask answers.

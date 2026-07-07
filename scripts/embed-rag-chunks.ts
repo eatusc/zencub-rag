@@ -27,6 +27,7 @@ const openaiKey = process.env.OPENAI_API_KEY;
 const model = process.env.RAG_EMBEDDING_MODEL ?? "text-embedding-3-small";
 const batchSize = Number(process.env.RAG_EMBED_BATCH_SIZE ?? "64");
 const updateConcurrency = Number(process.env.RAG_EMBED_UPDATE_CONCURRENCY ?? "8");
+const loadRetries = Number(process.env.RAG_EMBED_LOAD_RETRIES ?? "3");
 const limitArg = process.argv.find((arg) => arg.startsWith("--limit="));
 const apply = process.argv.includes("--apply");
 const all = process.argv.includes("--all");
@@ -44,17 +45,28 @@ if (!host.includes("YOUR_PROJECT_REF")) {
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 const openai = new OpenAI({ apiKey: openaiKey });
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function loadBatch(remaining: number): Promise<ChunkRow[]> {
   const size = Math.min(batchSize, remaining);
-  const { data, error } = await supabase
-    .from("rag_transcript_chunks")
-    .select("id,text")
-    .is("embedding", null)
-    .order("created_at", { ascending: true })
-    .limit(size);
+  for (let attempt = 1; attempt <= loadRetries; attempt += 1) {
+    const { data, error } = await supabase
+      .from("rag_transcript_chunks")
+      .select("id,text")
+      .is("embedding", null)
+      .limit(size);
 
-  if (error) throw new Error(error.message);
-  return (data ?? []) as ChunkRow[];
+    if (!error) return (data ?? []) as ChunkRow[];
+    if (attempt === loadRetries || !error.message.toLowerCase().includes("timeout")) {
+      throw new Error(error.message);
+    }
+    console.warn(`load batch timeout; retrying ${attempt}/${loadRetries}`);
+    await sleep(attempt * 1000);
+  }
+
+  return [];
 }
 
 async function embedBatch(rows: ChunkRow[]) {

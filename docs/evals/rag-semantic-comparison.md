@@ -2,7 +2,7 @@
 
 Generated: 2026-07-07
 
-This comparison checks where `Semantic Search` helps compared with normal keyword `Search`. It is a manual report from live API calls against TEST with 4,352 embedded chunks.
+This comparison checks where `Semantic Search` helps compared with normal keyword `Search`. It is a manual report from live API calls against TEST with 7,296 embedded chunks.
 
 | Query | Normal Search Top Result | Semantic Search Top Result | Read |
 | --- | --- | --- | --- |
