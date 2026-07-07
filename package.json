@@ -2,6 +2,24 @@
   "name": "zencub-rag",
   "version": "0.1.0",
   "private": true,
+  "description": "A RAG app for BJJ video transcripts: hybrid (keyword + semantic) retrieval with Reciprocal Rank Fusion, LLM reranking, and citation-backed generated answers, built on Next.js, Supabase/pgvector, and OpenAI.",
+  "keywords": [
+    "rag",
+    "retrieval-augmented-generation",
+    "semantic-search",
+    "vector-search",
+    "pgvector",
+    "supabase",
+    "nextjs",
+    "openai",
+    "reranking"
+  ],
+  "author": "Eric Lai",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eatusc/zencub-rag.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

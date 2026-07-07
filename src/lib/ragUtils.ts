@@ -1,3 +1,4 @@
+import type { Technique } from "@/lib/ragRetrieval";
 import type { RagSearchResult } from "@/lib/types";
 
 export type RagSource = {
@@ -13,6 +14,10 @@ export type RagSource = {
   watch_url: string | null;
   score: number;
   text: string;
+  technique: string | null;
+  position: string | null;
+  difficulty: string | null;
+  gi_nogi: string | null;
 };
 
 export function asNumber(value: number | string | null | undefined) {
@@ -45,7 +50,7 @@ export function timestampUrl(url: string | null | undefined, startSeconds: numbe
   return url;
 }
 
-export function formatRagSource(row: RagSearchResult, index: number): RagSource {
+export function formatRagSource(row: RagSearchResult, index: number, technique?: Technique | null): RagSource {
   const start = asNumber(row.start_seconds);
   const end = asNumber(row.end_seconds);
   return {
@@ -61,5 +66,9 @@ export function formatRagSource(row: RagSearchResult, index: number): RagSource 
     watch_url: timestampUrl(row.metadata?.video_url, start),
     score: row.rank ?? 0,
     text: row.text.slice(0, 1400),
+    technique: technique?.technique_name ?? null,
+    position: technique?.canonical_position ?? technique?.position ?? null,
+    difficulty: technique?.difficulty ?? null,
+    gi_nogi: technique?.gi_nogi ?? null,
   };
 }

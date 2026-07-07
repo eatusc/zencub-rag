@@ -60,15 +60,19 @@ Ask flow:
 ```text
 Ask button
   -> POST /api/rag/ask { query, retrieval: "auto" }
-    -> try vector retrieval
-      -> mix vector and text evidence when vector matches are strong
-      -> fall back to text retrieval when vector matches are sparse, weak, or produce no citations
-        -> trim source chunks
-          -> answer model prompt
-            -> cited answer JSON
+    -> retrieve vector + text candidate pools in parallel
+      -> drop degenerate chunks (~120 char / ~30 token floor)
+        -> fuse with Reciprocal Rank Fusion (no score threshold)
+          -> cap to 2 chunks per video for source diversity
+            -> LLM rerank the pool by intent
+              -> enrich top chunks with overlapping rag_techniques metadata
+                -> answer model prompt
+                  -> cited answer JSON
 ```
 
-`/api/rag/ask` is the first open-ended RAG endpoint. It retrieves sources server-side, sends only those sources to the answer model, and returns answer text, citations, takeaways, follow-up searches, and caveats. Auto mode can return `hybrid`, `text`, or `vector` retrieval. The answer model is configured by `RAG_ANSWER_MODEL` and defaults to `gpt-4o-mini`.
+`/api/rag/ask` is the first open-ended RAG endpoint. It retrieves sources server-side, sends only those sources to the answer model, and returns answer text, citations, takeaways, follow-up searches, and caveats. Auto mode fuses vector and text with RRF and reports `hybrid`, or `text`/`vector` when only one retriever returns candidates. Retrieval helpers live in `src/lib/ragRetrieval.ts`. The answer model is configured by `RAG_ANSWER_MODEL`; the reranker by `RAG_RERANK_MODEL` (`RAG_RERANK=off` disables it). Both default to `gpt-4o-mini`.
+
+The database-native versions of hybrid fusion, the HNSW/GIN indexes, and optional degenerate-chunk cleanup are in `docs/migrations/2026-07-07-hybrid-rrf-index-cleanup.sql` for running in the Supabase SQL editor.
 
 ## Visual Map In The App
 

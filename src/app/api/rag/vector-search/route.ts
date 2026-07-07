@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getServerEnv } from "@/lib/env";
+import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { createServerSupabase } from "@/lib/supabase";
 import type { RagSearchResult } from "@/lib/types";
 
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
     const supabase = createServerSupabase();
     const { data, error } = await supabase.rpc("match_rag_transcript_chunks", {
       query_embedding: queryEmbedding,
-      match_count: limit,
+      match_count: Math.min(limit * 3, 60),
       filter_video_id: null,
     });
 
@@ -41,10 +42,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const results = ((data ?? []) as RagSearchResult[]).map((result) => ({
+    const ranked = ((data ?? []) as RagSearchResult[]).map((result) => ({
       ...result,
       rank: result.similarity ?? result.rank ?? 0,
     }));
+    const results = capPerVideo(filterDegenerate(ranked)).slice(0, limit);
 
     return NextResponse.json({
       query,

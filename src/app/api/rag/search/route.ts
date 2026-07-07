@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { createServerSupabase } from "@/lib/supabase";
 import type { RagSearchResult } from "@/lib/types";
 
@@ -13,18 +14,22 @@ export async function GET(request: NextRequest) {
 
   try {
     const supabase = createServerSupabase();
+    // Over-fetch so degenerate-filtering and per-video diversity still leave
+    // a full page of results.
     const { data, error } = await supabase.rpc("search_rag_transcript_chunks", {
       query_text: query,
-      match_count: limit,
+      match_count: Math.min(limit * 3, 60),
     });
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    const results = capPerVideo(filterDegenerate((data ?? []) as RagSearchResult[])).slice(0, limit);
+
     return NextResponse.json({
       query,
-      results: (data ?? []) as RagSearchResult[],
+      results,
     });
   } catch (error) {
     return NextResponse.json(

@@ -181,19 +181,20 @@ This is useful before full chat because it keeps the model grounded in visible r
 
 ```text
 current query
-  -> try semantic retrieval from embedded chunks
-    -> mix vector and text evidence when vector matches are strong
-    -> fall back to text retrieval if vector matches are weak or citations are empty
-      -> answer from retrieved source chunks only
+  -> retrieve vector + text candidate pools
+    -> drop degenerate chunks, fuse with Reciprocal Rank Fusion
+      -> cap to 2 chunks per video, then LLM-rerank by intent
+        -> enrich top chunks with overlapping technique metadata
+          -> answer from retrieved source chunks only
 ```
 
-It returns a compact answer, citations with watch links, key takeaways, follow-up searches, and caveats. Hybrid retrieval and citation fallback matter while only part of the corpus is embedded.
+It returns a compact answer, citations with watch links, key takeaways, follow-up searches, and caveats. RRF fusion removes the need for a similarity threshold, the per-video cap keeps sources diverse, and the reranker fixes intent mismatches (for example, a "defend leg locks" query surfacing defensive rather than attacking clips).
 
 ## Evaluation System
 
 The first evaluation suite tests retrieval quality, not generated answers.
 
-It runs 9 practical BJJ queries through `/api/rag/search`:
+It runs 19 practical BJJ queries through `/api/rag/search`:
 
 - `knee cut`
 - `saddle`
@@ -204,6 +205,16 @@ It runs 9 practical BJJ queries through `/api/rag/search`:
 - `kimura trap`
 - `body lock pass`
 - `deep half`
+- `rear naked choke`
+- `armbar`
+- `triangle choke`
+- `arm triangle`
+- `ankle lock`
+- `heel hook`
+- `mount escape`
+- `closed guard pass`
+- `bow and arrow choke`
+- `omoplata`
 
 For each query, it checks:
 

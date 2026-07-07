@@ -1,17 +1,26 @@
 # ZenCub RAG
 
-Separate internal RAG app for exploring ZenCub transcript search and grounded answers.
+A Retrieval-Augmented Generation app that turns a BJJ (Brazilian Jiu-Jitsu) video-transcript library into a searchable, citation-backed research assistant. It runs hybrid retrieval (keyword + semantic), fuses the results, reranks them by intent, and generates answers grounded only in the retrieved source clips — every claim links back to a video and timestamp.
 
-This app is intentionally separate from the main ZenCub web and iOS repos. It reads the TEST Supabase `rag_` tables created from a PROD transcript snapshot and should not write to normal ZenCub app tables.
+It reads a read-only Supabase snapshot of transcript data and never writes to source application tables. All database access is server-side; secrets never reach the browser.
+
+## Screenshots
+
+| Search | System Map |
+| --- | --- |
+| ![Search tab](docs/media/search.png) | ![System Map tab](docs/media/system-map.png) |
+
+> Add the two PNGs to `docs/media/` before publishing (run `npm run dev` and capture the Search and System Map tabs).
 
 ## Current Scope
 
-- Read-only transcript search over `rag_transcript_chunks`
-- Citation-oriented results using chunk metadata
+- Hybrid retrieval over `rag_transcript_chunks`: keyword full-text search + semantic vector search fused with Reciprocal Rank Fusion
+- LLM reranking and per-video result diversity for higher-signal top results
+- Citation-oriented results using chunk metadata (title, channel, timestamp, source URL)
 - Server-side Supabase service-role access only
-- First-pass semantic search over the initial embedded chunk batch
-- Generated cited answers through `/api/rag/ask`
-- Home-page `System Map` tab visualizes the pipeline, current coverage, and remaining backfill work
+- Full semantic-search coverage across the embedded transcript corpus
+- Generated cited answers through `/api/rag/ask`, enriched with overlapping technique metadata
+- Home-page `System Map` tab visualizes the pipeline, corpus coverage, and table roles
 
 ## Local Setup
 
@@ -31,6 +40,9 @@ OPENAI_API_KEY=...
 RAG_ANALYZE_MODEL=gpt-4o-mini
 RAG_ANSWER_MODEL=gpt-4o-mini
 RAG_EMBEDDING_MODEL=text-embedding-3-small
+RAG_RERANK_MODEL=gpt-4o-mini
+RAG_RERANK=on
+RAG_TEST_PROJECT_REF=YOUR_PROJECT_REF
 ```
 
 The browser never receives the service-role key. API routes own all database access.
@@ -87,11 +99,11 @@ The important separation:
 - API routes own all database access so secrets stay server-side.
 - `/api/rag/analyze` reruns the current search, sends the top chunks to a small/fast model, and returns a structured watch plan.
 - `/api/rag/vector-search` embeds the query and calls `match_rag_transcript_chunks`.
-- `/api/rag/ask` retrieves chunks, falls back to text search when vector matches are weak, and returns a cited answer.
+- `/api/rag/ask` fuses vector + text retrieval with Reciprocal Rank Fusion, caps sources per video, reranks by intent, enriches with technique metadata, and returns a cited answer. Retrieval helpers live in `src/lib/ragRetrieval.ts`.
 
 ## Data Source
 
-TEST Supabase project: `YOUR_PROJECT_REF`
+TEST Supabase project: `YOUR_PROJECT_REF` (set via `NEXT_PUBLIC_SUPABASE_URL`)
 
 Tables used:
 
@@ -114,10 +126,10 @@ Current TEST snapshot:
 
 The home page has two tabs:
 
-- `Search`: live text search over transcript chunks.
-- `Analyze Results`: button shown after a search; summarizes the best watch moments and study takeaways from the current results.
-- `Semantic Search`: embeds the query and searches the embedded chunk subset by meaning.
-- `Ask`: generates an answer using retrieved chunks and citations.
+- `Search`: live text search over transcript chunks. This tab also holds three buttons:
+  - `Analyze Results`: shown after a search; summarizes the best watch moments and study takeaways from the current results.
+  - `Semantic Search`: embeds the query and searches the embedded chunks by meaning.
+  - `Ask`: generates an answer using retrieved chunks and citations.
 - `System Map`: visual explanation of the RAG data flow, table roles, current state, and next steps.
 
 Good test queries in the current text-search build:
@@ -168,10 +180,8 @@ npm run embed:chunks -- --limit=2048 --apply
 npm run dev -- --port 3021
 ```
 
-`embed:chunks` defaults to dry-run. Use `--apply` to write vectors. Use `--all --apply` only when you intentionally want to backfill every missing chunk in TEST.
+`embed:chunks` defaults to dry-run. Use `--apply` to write vectors. Use `--all --apply` only when you intentionally want to backfill every missing chunk in TEST. `embed:chunks` requires `RAG_TEST_PROJECT_REF` to match the target Supabase host as a safety guard against writing to the wrong project.
 
-Local dashboard launcher:
+## License
 
-```text
-/Users/YOUR_USER/Desktop/Apps/Run_ZenCub_RAG.command
-```
+MIT — see [LICENSE](LICENSE).

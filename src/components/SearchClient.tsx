@@ -404,9 +404,9 @@ export function SearchClient() {
           <section className="overview-band">
             <div>
               <p className="section-kicker">Current build</p>
-              <h2>Searchable transcript evidence with first-pass semantic search and answers</h2>
+              <h2>Searchable transcript evidence with semantic search and answers</h2>
               <p>
-                The app reads TEST `rag_` tables, retrieves transcript chunks with citations, embeds an initial chunk batch for meaning search, and generates answers only from retrieved sources.
+                The app reads TEST `rag_` tables, retrieves transcript chunks with citations, embeds the full chunk corpus for meaning search, and generates answers only from retrieved sources.
               </p>
             </div>
             <div className="metric-grid" aria-label="Corpus summary">

@@ -5,6 +5,8 @@ type ServerEnv = {
   ragAnalyzeModel: string;
   ragAnswerModel: string;
   ragEmbeddingModel: string;
+  ragRerankModel: string;
+  ragRerankEnabled: boolean;
 };
 
 export function getServerEnv(): ServerEnv {
@@ -26,5 +28,7 @@ export function getServerEnv(): ServerEnv {
     ragAnalyzeModel: process.env.RAG_ANALYZE_MODEL ?? "gpt-4o-mini",
     ragAnswerModel: process.env.RAG_ANSWER_MODEL ?? "gpt-4o-mini",
     ragEmbeddingModel: process.env.RAG_EMBEDDING_MODEL ?? "text-embedding-3-small",
+    ragRerankModel: process.env.RAG_RERANK_MODEL ?? process.env.RAG_ANALYZE_MODEL ?? "gpt-4o-mini",
+    ragRerankEnabled: process.env.RAG_RERANK !== "off",
   };
 }

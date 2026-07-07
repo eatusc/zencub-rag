@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getServerEnv } from "@/lib/env";
+import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { asNumber, formatRagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
 import type { RagAnalysis, RagSearchResult } from "@/lib/types";
@@ -59,14 +60,15 @@ export async function POST(request: NextRequest) {
     const supabase = createServerSupabase();
     const { data, error } = await supabase.rpc("search_rag_transcript_chunks", {
       query_text: query,
-      match_count: RESULT_LIMIT,
+      match_count: RESULT_LIMIT * 3,
     });
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const sources = ((data ?? []) as RagSearchResult[]).map(formatRagSource);
+    const rows = capPerVideo(filterDegenerate((data ?? []) as RagSearchResult[])).slice(0, RESULT_LIMIT);
+    const sources = rows.map((row, index) => formatRagSource(row, index));
     if (sources.length === 0) {
       return NextResponse.json({ error: "No sources found to analyze." }, { status: 404 });
     }

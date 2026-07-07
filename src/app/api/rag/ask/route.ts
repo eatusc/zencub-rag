@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getServerEnv } from "@/lib/env";
-import { asNumber, formatRagSource } from "@/lib/ragUtils";
+import {
+  CANDIDATE_POOL,
+  RERANK_POOL,
+  capPerVideo,
+  enrichWithTechniques,
+  filterDegenerate,
+  rerankWithLLM,
+  rrfFuse,
+} from "@/lib/ragRetrieval";
+import { asNumber, formatRagSource, type RagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
 import type { RagAnswer, RagSearchResult } from "@/lib/types";
 
 const RESULT_LIMIT = 8;
-const MIN_VECTOR_RESULTS = 3;
-const MIN_VECTOR_TOP_SIMILARITY = 0.5;
 type RetrievalMode = "vector" | "text" | "hybrid";
 
 function coerceAnswer(value: unknown): RagAnswer {
@@ -71,52 +78,37 @@ async function textResults(query: string, limit: number) {
   return (data ?? []) as RagSearchResult[];
 }
 
-function mergeHybridResults(vectorRows: RagSearchResult[], textRows: RagSearchResult[], limit: number) {
-  const rows: RagSearchResult[] = [];
-  const seen = new Set<string>();
-
-  const add = (row: RagSearchResult | undefined) => {
-    if (!row || seen.has(row.id)) return;
-    seen.add(row.id);
-    rows.push(row);
-  };
-
-  for (let index = 0; rows.length < limit && index < Math.max(vectorRows.length, textRows.length); index += 1) {
-    if (index < Math.ceil(limit / 2)) add(vectorRows[index]);
-    add(textRows[index]);
-  }
-
-  for (const row of [...vectorRows, ...textRows]) {
-    if (rows.length >= limit) break;
-    add(row);
-  }
-
-  return rows.slice(0, limit);
-}
-
-async function buildSources(query: string, requestedRetrieval: "text" | "vector" | "auto", openai: OpenAI, env: ReturnType<typeof getServerEnv>) {
+// Retrieve candidates, fuse with RRF, then diversify. Replaces the previous
+// similarity-threshold + interleave + citation-retry logic with rank fusion,
+// which needs no score cutoff and merges text and vector on equal footing.
+async function buildCandidates(
+  query: string,
+  requestedRetrieval: "text" | "vector" | "auto",
+  openai: OpenAI,
+  env: ReturnType<typeof getServerEnv>,
+): Promise<{ retrieval: RetrievalMode; rows: RagSearchResult[] }> {
   if (requestedRetrieval === "text") {
-    return { retrieval: "text" as RetrievalMode, rows: await textResults(query, RESULT_LIMIT) };
+    const rows = capPerVideo(filterDegenerate(await textResults(query, CANDIDATE_POOL)));
+    return { retrieval: "text", rows };
   }
-
   if (requestedRetrieval === "vector") {
-    return { retrieval: "vector" as RetrievalMode, rows: await vectorResults(query, RESULT_LIMIT, openai, env) };
+    const rows = capPerVideo(filterDegenerate(await vectorResults(query, CANDIDATE_POOL, openai, env)));
+    return { retrieval: "vector", rows };
   }
 
-  const vectorRows = await vectorResults(query, RESULT_LIMIT, openai, env);
-  const topVectorSimilarity = vectorRows[0]?.similarity ?? vectorRows[0]?.rank ?? 0;
-  const shouldUseTextOnly = vectorRows.length < MIN_VECTOR_RESULTS || topVectorSimilarity < MIN_VECTOR_TOP_SIMILARITY;
+  const [vectorRaw, textRaw] = await Promise.all([
+    vectorResults(query, CANDIDATE_POOL, openai, env).catch(() => [] as RagSearchResult[]),
+    textResults(query, CANDIDATE_POOL),
+  ]);
+  const vector = filterDegenerate(vectorRaw);
+  const text = filterDegenerate(textRaw);
 
-  const textRows = await textResults(query, RESULT_LIMIT);
-  if (shouldUseTextOnly) {
-    return { retrieval: "text" as RetrievalMode, rows: textRows };
-  }
-
-  return { retrieval: "hybrid" as RetrievalMode, rows: mergeHybridResults(vectorRows, textRows, RESULT_LIMIT) };
+  if (vector.length === 0) return { retrieval: "text", rows: capPerVideo(text) };
+  if (text.length === 0) return { retrieval: "vector", rows: capPerVideo(vector) };
+  return { retrieval: "hybrid", rows: capPerVideo(rrfFuse([vector, text])) };
 }
 
-async function generateAnswer(query: string, rows: RagSearchResult[], openai: OpenAI, env: ReturnType<typeof getServerEnv>) {
-  const sources = rows.map(formatRagSource);
+async function generateAnswer(query: string, sources: RagSource[], openai: OpenAI, env: ReturnType<typeof getServerEnv>) {
   const completion = await openai.chat.completions.create({
     model: env.ragAnswerModel,
     temperature: 0.2,
@@ -128,10 +120,12 @@ async function generateAnswer(query: string, rows: RagSearchResult[], openai: Op
           "You are a concise BJJ research assistant.",
           "Answer only from the provided transcript chunks.",
           "Do not invent techniques, videos, timestamps, or claims.",
+          "Each source may include technique, position, difficulty, and gi_nogi tags; use them to frame the answer accurately.",
           "If evidence is weak, say so in caveats.",
           "Return valid JSON only with keys: answer, citations, key_takeaways, follow_up_searches, caveats.",
           "citations must be copied from provided sources and include title, citation, start_seconds, end_seconds, watch_url.",
           "If any source supports the answer, include at least one citation.",
+          "Prefer citing 2 or more distinct videos when multiple sources support the answer, rather than repeating one video at different timestamps.",
           "Use short paragraphs and practical jiu-jitsu language.",
         ].join(" "),
       },
@@ -148,7 +142,7 @@ async function generateAnswer(query: string, rows: RagSearchResult[], openai: Op
 
   const content = completion.choices[0]?.message.content ?? "{}";
   const parsed = JSON.parse(content) as unknown;
-  return { answer: coerceAnswer(parsed), sourceCount: sources.length };
+  return coerceAnswer(parsed);
 }
 
 export async function POST(request: NextRequest) {
@@ -167,26 +161,30 @@ export async function POST(request: NextRequest) {
     }
 
     const openai = new OpenAI({ apiKey: env.openaiApiKey });
-    let { retrieval, rows } = await buildSources(query, requestedRetrieval, openai, env);
+    const { retrieval, rows } = await buildCandidates(query, requestedRetrieval, openai, env);
 
     if (rows.length === 0) {
       return NextResponse.json({ error: "No sources found to answer from." }, { status: 404 });
     }
 
-    let { answer, sourceCount } = await generateAnswer(query, rows, openai, env);
-    if (requestedRetrieval === "auto" && retrieval !== "text" && answer.citations.length === 0) {
-      rows = await textResults(query, RESULT_LIMIT);
-      retrieval = "text";
-      const retry = await generateAnswer(query, rows, openai, env);
-      answer = retry.answer;
-      sourceCount = retry.sourceCount;
-    }
+    // Rerank the diverse candidate pool for true relevance, keep the top slice,
+    // then enrich with overlapping technique metadata for grounded citations.
+    const pool = rows.slice(0, RERANK_POOL);
+    const reranked = env.ragRerankEnabled
+      ? await rerankWithLLM(query, pool, openai, env.ragRerankModel, RESULT_LIMIT)
+      : pool;
+    const top = reranked.slice(0, RESULT_LIMIT);
+    const enriched = await enrichWithTechniques(top);
+    const sources = enriched.map(({ row, technique }, index) => formatRagSource(row, index, technique));
+
+    const answer = await generateAnswer(query, sources, openai, env);
 
     return NextResponse.json({
       query,
       model: env.ragAnswerModel,
       retrieval,
-      source_count: sourceCount,
+      reranked: env.ragRerankEnabled,
+      source_count: sources.length,
       answer,
     });
   } catch (error) {

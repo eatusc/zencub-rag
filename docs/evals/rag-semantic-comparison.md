@@ -15,4 +15,4 @@ This comparison checks where `Semantic Search` helps compared with normal keywor
 | `recover guard when smashed` | `Rafael Mendes | Guard Passing Options Using the Shin Trap @ 5:48` | `BJJ Tutorial - Powerful Guard Pass Prevention - Firas Zahabi @ 3:26` | Semantic improved: it found guard-pass-prevention content, but Ask still used text fallback. |
 | `control the head from side control` | `Guard Retention - How To Never Get Your Guard Passed In Jiu Jitsu by Gordon Ryan @ 6:59` | `How To Build The Perfect Half Guard Game by John Danaher @ 10:25` | Semantic found related head-control framing, but this query still needs better ranking. |
 
-Takeaway: semantic search is most useful for concept phrasing where the exact words do not appear in the query. It still needs full corpus embedding and ranking evaluation for defensive/ambiguous queries.
+Takeaway: semantic search is most useful for concept phrasing where the exact words do not appear in the query. The full corpus is now embedded; the remaining work is ranking evaluation for defensive/ambiguous queries.

@@ -37,9 +37,13 @@ if (!supabaseUrl || !serviceKey || !openaiKey) {
   throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or OPENAI_API_KEY");
 }
 
+const expectedRef = process.env.RAG_TEST_PROJECT_REF;
+if (!expectedRef) {
+  throw new Error("Set RAG_TEST_PROJECT_REF to your TEST project ref to confirm the write target before embedding.");
+}
 const host = new URL(supabaseUrl).host;
-if (!host.includes("YOUR_PROJECT_REF")) {
-  throw new Error(`Refusing to embed: expected TEST Supabase, got ${host}`);
+if (!host.includes(expectedRef)) {
+  throw new Error(`Refusing to embed: expected TEST project '${expectedRef}', got ${host}`);
 }
 
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });

@@ -2,6 +2,28 @@
 
 ## 2026-07-07
 
+Reviewed the live TEST database and reworked retrieval quality. Introspected all six `rag_` tables via PostgREST: confirmed counts (2,402 videos / 2,298 transcripts / 2,844 techniques / 2,385 attributions / 468 creators / 12,104 chunks, all embedded), chunk sizing (median 1,096 chars / 214 words / 76s windows with ~6-7s overlap), and found two concrete problems — top results duplicating the same video (`heel hook` returned 5 results from one video 3x; `body lock pass` 5/4 distinct) and ~419 chunks under 20 tokens / ~802 under 50 that were embedded and polluting results.
+
+Implemented the retrieval upgrades in app code (`src/lib/ragRetrieval.ts`):
+
+- Reciprocal Rank Fusion (`rrfFuse`, k=60) replaces the old `MIN_VECTOR_TOP_SIMILARITY = 0.5` threshold + naive interleave + citation-retry in `/api/rag/ask`. Fusion needs no absolute score cutoff, so it is robust to text-rank and cosine similarity living on different scales.
+- Per-video diversity cap (`capPerVideo`, max 2 per video) so top results are varied sources, not near-duplicate clips from one upload.
+- Degenerate-chunk filter (`filterDegenerate`, ~120 char / ~30 token floor) applied at read time across `/api/rag/search`, `/api/rag/vector-search`, `/api/rag/analyze`, and `/api/rag/ask`. Non-destructive; routes now over-fetch (limit x3, cap 60) so a full page survives filtering.
+- LLM reranker (`rerankWithLLM`, uses `RAG_RERANK_MODEL`, default `gpt-4o-mini`, toggle `RAG_RERANK=off`) reorders the diverse candidate pool by intent before generation, falling back to input order on any error. Directly targets the documented semantic-drift-on-defensive-queries weakness.
+- Technique enrichment (`enrichWithTechniques`) joins each retrieved chunk's timespan to the overlapping `rag_techniques` row and passes technique/position/difficulty/gi_nogi into the answer prompt and `formatRagSource`. Previously `rag_techniques` (2,844 rows) was unused by retrieval.
+
+Added `docs/migrations/2026-07-07-hybrid-rrf-index-cleanup.sql` for the pieces this app cannot run over PostgREST (no DDL/DML-of-that-kind access): the HNSW `vector_cosine_ops` index (a no-op at 12k rows, needed before PROD scale), a GIN FTS index, an optional server-side `hybrid_search_rag_chunks` RRF function to push fusion into Postgres later, and an optional hard-delete of sub-30-token chunks. These run in the Supabase SQL editor.
+
+Deferred small-to-big chunking: it requires re-chunking/re-ingestion owned by the main ZenCub import pipeline, not this read-only app.
+
+Verification (against the running dev server, hot-reloaded): `npm run typecheck` clean; `npm run eval:queries` 19/19 (regenerated `docs/evals/rag-search-eval.md`); `search` for `heel hook` now caps at 2 per video and pulls in a third source with min text length 907; `ask` for `how do I stop someone from passing my guard` returned `hybrid` + `reranked` with guard-pass-prevention citations (Firas Zahabi, Danaher), and `defend leg locks safely` — the documented drift case — now returns a defense-oriented cited answer instead of attack clips.
+
+Ran a 10-phrase sweep (paraphrase, defensive-intent, and exact-term queries) through both `/api/rag/search` and `/api/rag/ask`. All 10 Ask calls returned `hybrid` + `reranked` with 8 sources; every defensive/escape phrase returned defense/escape answers rather than attacking clips; degenerate filter held (min text length 760-1487 across all results); per-video dedup held (search results 4-5 distinct videos, never 3+ from one video). Best case for hybrid: `escape when someone is crushing me in mount` returned only 1 keyword-search result (top hit was an offensive "Armbar From Mount" clip), but Ask's vector arm recovered it into a proper mount-escape answer.
+
+Added a citation-diversity nudge to the `/api/rag/ask` answer prompt ("prefer citing 2 or more distinct videos when multiple sources support the answer"). Note: the apparent "citations collapse to one video" signal that prompted this was mostly a measurement bug in the test harness (it split YouTube `watch_url` on `?`, collapsing every video to the shared `/watch` prefix). Re-measured by `v=` id, Ask citations were already diverse — 2 distinct videos across the re-checked queries. The prompt line is kept as harmless reinforcement, not a fix for a real collapse. Retrieval-side dedup and citation-side diversity are both healthy.
+
+## 2026-07-07
+
 Created separate `zencub-rag` Next/TypeScript app. Added server-side Supabase wiring, read-only text-search API over TEST `rag_transcript_chunks`, compact search UI, README, architecture notes, and local setup docs. Embeddings and answer generation are pending.
 
 ## 2026-07-07

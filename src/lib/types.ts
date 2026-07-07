@@ -71,6 +71,7 @@ export type RagAskResponse = {
   query: string;
   model: string;
   retrieval: "vector" | "text" | "hybrid";
+  reranked?: boolean;
   source_count: number;
   answer: RagAnswer;
 };
