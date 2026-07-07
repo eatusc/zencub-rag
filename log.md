@@ -67,3 +67,9 @@ Hardened `scripts/embed-rag-chunks.ts` after the timeout: removed the `created_a
 Ran another TEST embedding pass with `npm run embed:chunks -- --limit=2048 --apply`. It completed cleanly, increasing coverage from 7,296 to 9,344 embedded chunks out of 12,104; 2,760 chunks remain missing vectors. Updated System Map, README, architecture, RAG technology notes, next steps, and semantic comparison docs with the new counts.
 
 Testing after the pass: `npm run eval:queries` passed 19/19. Focused Semantic/Ask sweep for the 10 common-move queries passed 10/10 with cited Ask answers. Concept scenario sweep showed pure Semantic Search remains mixed on ambiguous defensive wording, but Ask hybrid retrieval returned cited answers for all checked scenarios.
+
+## 2026-07-07
+
+Completed the remaining TEST embedding backfill with `npm run embed:chunks -- --all --apply`. Embedded the final 2,760 chunks; coverage is now 12,104/12,104 with 0 missing vectors. Updated System Map, README, architecture, RAG technology notes, next steps, and semantic comparison docs to show full vector coverage.
+
+Testing after full coverage: `npm run eval:queries` passed 19/19. Focused Semantic/Ask sweep for the 10 common-move queries passed 10/10 with cited Ask answers. Concept scenario sweep passed 8/8 for Ask citations. Pure Semantic Search still drifts on some ambiguous defensive wording, so Ask hybrid retrieval remains the safer user-facing answer path.

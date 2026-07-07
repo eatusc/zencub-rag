@@ -83,7 +83,7 @@ The important separation:
 
 - `rag_` source tables hold the copied ZenCub TEST corpus.
 - `rag_transcript_chunks` holds searchable evidence chunks with timestamps.
-- `embedding` holds vector representations; 9,344 chunks are embedded for testing, with the full backfill still pending.
+- `embedding` holds vector representations; 12,104 chunks are embedded; the TEST transcript corpus has full vector coverage.
 - API routes own all database access so secrets stay server-side.
 - `/api/rag/analyze` reruns the current search, sends the top chunks to a small/fast model, and returns a structured watch plan.
 - `/api/rag/vector-search` embeds the query and calls `match_rag_transcript_chunks`.
@@ -108,7 +108,7 @@ Current TEST snapshot:
 - `2,298` transcripts
 - `2,844` techniques
 - `12,104` transcript chunks
-- `9,344` embedded chunks
+- `12,104` embedded chunks
 
 ## Interface
 
