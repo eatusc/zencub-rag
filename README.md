@@ -130,6 +130,18 @@ Good test queries in the current text-search build:
 - `heel hook escape`
 - `single leg x`
 - `kimura trap`
+- `body lock pass`
+- `deep half`
+- `rear naked choke`
+- `armbar`
+- `triangle choke`
+- `arm triangle`
+- `ankle lock`
+- `heel hook`
+- `mount escape`
+- `closed guard pass`
+- `bow and arrow choke`
+- `omoplata`
 
 These are not just examples in the UI. They are evaluated through the live API:
 

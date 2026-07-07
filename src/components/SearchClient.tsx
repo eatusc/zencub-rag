@@ -538,7 +538,7 @@ export function SearchClient() {
               <h2>These examples are checked by `npm run eval:queries`</h2>
             </div>
             <div className="eval-strip">
-              <div><strong>9/9</strong><span>passing examples</span></div>
+              <div><strong>19/19</strong><span>passing examples</span></div>
               <div><strong>4</strong><span>checks per query</span></div>
               <div><strong>5</strong><span>results inspected</span></div>
               <div><strong>docs/evals</strong><span>latest report</span></div>

@@ -117,6 +117,16 @@ These are good for the current text-search and Ask flows:
 | `heel hook escape` | Submission-defense query; useful once embeddings are added. |
 | `single leg x` | Position-specific query; tests transcript spelling and phrasing. |
 | `kimura trap` | Named technique system; should surface focused clips if present. |
+| `rear naked choke` | Common back submission; tests choke/back-control evidence. |
+| `armbar` | Common joint lock; tests short named-technique matching. |
+| `triangle choke` | Common guard submission; tests setup/escape evidence. |
+| `arm triangle` | Head-and-arm choke; tests multi-word submission matching. |
+| `ankle lock` | Leg-lock query; tests straight-foot-lock/ankle-lock evidence. |
+| `heel hook` | Leg-lock query; tests heel-exposure and leg-entanglement evidence. |
+| `mount escape` | Common beginner problem; tests escape/recovery evidence. |
+| `closed guard pass` | Common passing problem; tests guard-opening and passing evidence. |
+| `bow and arrow choke` | Gi back submission; tests lapel choke evidence. |
+| `omoplata` | Shoulder-lock guard attack; tests less common named-technique evidence. |
 
 ## Why Citations Matter
 
