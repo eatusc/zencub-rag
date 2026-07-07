@@ -53,7 +53,7 @@ Semantic Search button
           -> meaning-ranked results
 ```
 
-The first 256 transcript chunks are embedded in TEST for end-to-end validation. The full 12,104 chunk backfill is still pending.
+4,352 transcript chunks are embedded in TEST for end-to-end validation. The full 12,104 chunk backfill is still pending.
 
 Ask flow:
 

@@ -46,7 +46,7 @@ const pipeline = [
   {
     icon: Brain,
     title: "Embed for meaning",
-    detail: "A first batch of 256 chunks has vectors in rag_transcript_chunks.embedding for semantic search testing.",
+    detail: "4,352 chunks now have vectors in rag_transcript_chunks.embedding for semantic search testing.",
     status: "live",
   },
   {
@@ -398,7 +398,7 @@ export function SearchClient() {
               <div><strong>12,104</strong><span>chunks</span></div>
               <div><strong>2,298</strong><span>transcripts</span></div>
               <div><strong>2,844</strong><span>techniques</span></div>
-              <div><strong>256</strong><span>embedded</span></div>
+              <div><strong>4,352</strong><span>embedded</span></div>
             </div>
           </section>
 
@@ -431,9 +431,9 @@ export function SearchClient() {
             </div>
             <div className="explain-panel">
               <p className="section-kicker">Backfill job</p>
-              <h3>What the 256 embedded chunks are</h3>
+              <h3>What the 4,352 embedded chunks are</h3>
               <p className="plain-copy">
-                The job reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding`. Only 256 of 12,104 chunks are embedded right now, so vector search is still partial.
+                The job reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding`. 4,352 of 12,104 chunks are embedded right now, so vector search is stronger but still partial.
               </p>
             </div>
           </section>
