@@ -109,6 +109,7 @@ Current:
 - text-search endpoint
 - visual search UI
 - System Map tab
+- evaluated example-query suite
 
 Pending:
 
@@ -117,3 +118,38 @@ Pending:
 - chat/ask endpoint
 - answer generation with citations
 - evaluation set for answer quality
+
+## Evaluation System
+
+The first evaluation suite tests retrieval quality, not generated answers.
+
+It runs 9 practical BJJ queries through `/api/rag/search`:
+
+- `knee cut`
+- `saddle`
+- `crossface`
+- `underhook half guard`
+- `guard retention`
+- `single leg x`
+- `kimura trap`
+- `body lock pass`
+- `deep half`
+
+For each query, it checks:
+
+- at least 3 results returned
+- expected BJJ terms appear in the retrieved evidence
+- top results include citations and timestamps
+- top results include source video URLs
+
+Run it with:
+
+```bash
+npm run eval:queries
+```
+
+Report:
+
+```text
+docs/evals/rag-search-eval.md
+```

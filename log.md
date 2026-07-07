@@ -15,3 +15,7 @@ Added a home-page `System Map` tab with a visual RAG pipeline, corpus metrics, t
 ## 2026-07-07
 
 Expanded the System Map with a plain-English RAG definition, common RAG use cases, and clickable test queries. Mirrored the explanation and query bank in README/architecture/RAG docs.
+
+## 2026-07-07
+
+Added shared evaluated examples and `npm run eval:queries`, which runs 9 BJJ queries through `/api/rag/search` and verifies result count, expected terms, citations, timestamps, and source URLs. Generated `docs/evals/rag-search-eval.md` and JSON report.

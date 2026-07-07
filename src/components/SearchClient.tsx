@@ -2,6 +2,7 @@
 
 import { Brain, Database, ExternalLink, FileText, Loader2, MessageSquare, Search, Workflow } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
+import { ragExamples } from "@/lib/ragExamples";
 import type { RagSearchResponse, RagSearchResult } from "@/lib/types";
 
 function secondsLabel(value: number | string | null) {
@@ -59,17 +60,6 @@ const dataTables = [
   ["rag_video_attributions", "2,385", "Creator/instructor attribution links"],
   ["rag_creators", "468", "Canonical creator names, aliases, opt-out field"],
   ["rag_transcript_chunks", "12,104", "Searchable timestamped evidence chunks"],
-];
-
-const exampleQueries = [
-  ["knee cut", "Basic word match; should return clips about knee-cut passing details."],
-  ["saddle", "Leg-lock position search; good for testing short topical queries."],
-  ["crossface", "Pinning/control concept that appears across multiple passing contexts."],
-  ["underhook half guard", "Multi-term BJJ concept; useful for seeing ranking quality."],
-  ["guard retention", "Broad concept query with many possible source videos."],
-  ["heel hook escape", "Submission-defense query; useful once embeddings are added."],
-  ["single leg x", "Position-specific query; tests transcript spelling and phrasing."],
-  ["kimura trap", "Named technique system; should surface focused clips if present."],
 ];
 
 export function SearchClient() {
@@ -231,6 +221,46 @@ export function SearchClient() {
             </div>
           </section>
 
+          <section className="use-case-panel">
+            <div className="table-map-header">
+              <p className="section-kicker">Practical ZenCub uses</p>
+              <h2>What this is useful for in jiu-jitsu</h2>
+            </div>
+            <div className="use-case-grid">
+              <div>
+                <strong>Find the exact clip</strong>
+                <span>Search a detail and jump to the timestamp where it is explained.</span>
+              </div>
+              <div>
+                <strong>Compare instruction</strong>
+                <span>Find how different channels explain the same position or problem.</span>
+              </div>
+              <div>
+                <strong>Build study stacks</strong>
+                <span>Turn search results into focused study lists for a position or problem.</span>
+              </div>
+              <div>
+                <strong>Debug your game</strong>
+                <span>Search for the problem you are having and inspect clips that discuss it.</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="pitch-panel">
+            <div>
+              <p className="section-kicker">How to explain it</p>
+              <h2>Ask your jiu-jitsu video library</h2>
+              <p>
+                ZenCub RAG turns BJJ videos into searchable training evidence. A user asks about a position, technique, or problem, and the system finds the real clips and timestamps behind the answer.
+              </p>
+            </div>
+            <div className="pitch-lines">
+              <span>Find the detail.</span>
+              <span>Open the source clip.</span>
+              <span>Study from cited instruction.</span>
+            </div>
+          </section>
+
           <section className="schema-grid">
             <div className="explain-panel">
               <p className="section-kicker">How a query works today</p>
@@ -254,14 +284,20 @@ export function SearchClient() {
 
           <section className="example-panel">
             <div className="table-map-header">
-              <p className="section-kicker">Good test queries</p>
-              <h2>Use these to see what the current search can and cannot find</h2>
+              <p className="section-kicker">Evaluated test queries</p>
+              <h2>These examples are checked by `npm run eval:queries`</h2>
+            </div>
+            <div className="eval-strip">
+              <div><strong>9/9</strong><span>passing examples</span></div>
+              <div><strong>4</strong><span>checks per query</span></div>
+              <div><strong>5</strong><span>results inspected</span></div>
+              <div><strong>docs/evals</strong><span>latest report</span></div>
             </div>
             <div className="query-grid">
-              {exampleQueries.map(([example, reason]) => (
-                <button type="button" key={example} onClick={() => useExample(example)}>
-                  <strong>{example}</strong>
-                  <span>{reason}</span>
+              {ragExamples.map((example) => (
+                <button type="button" key={example.query} onClick={() => useExample(example.query)}>
+                  <strong>{example.query}</strong>
+                  <span>{example.useCase}</span>
                 </button>
               ))}
             </div>

@@ -62,6 +62,26 @@ It also includes:
 - clickable test queries that run against `/api/rag/search`
 - table roles for each `rag_` table
 
+## Example Evaluation
+
+The evaluated examples live in `src/lib/ragExamples.ts`. The UI imports the same list that the evaluator uses, so displayed examples and test cases cannot drift.
+
+Run:
+
+```bash
+npm run eval:queries
+```
+
+The evaluator checks each example by calling the app API:
+
+```text
+ragExamples.ts
+  -> scripts/evaluate-rag-examples.ts
+    -> GET /api/rag/search?q=...
+      -> result count, expected terms, citations, source URLs
+        -> docs/evals/rag-search-eval.md
+```
+
 ## Table Roles
 
 | Table | Role |

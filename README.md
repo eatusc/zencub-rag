@@ -112,11 +112,26 @@ Good test queries in the current text-search build:
 - `single leg x`
 - `kimura trap`
 
+These are not just examples in the UI. They are evaluated through the live API:
+
+```bash
+npm run eval:queries
+```
+
+The evaluator calls `/api/rag/search`, checks that each query returns enough results, verifies expected BJJ terms appear in the retrieved evidence, and confirms top results include citations, timestamps, and source URLs.
+
+Latest generated report:
+
+```text
+docs/evals/rag-search-eval.md
+```
+
 ## Commands
 
 ```bash
 npm run typecheck
 npm run build
+npm run eval:queries
 npm run dev -- --port 3021
 ```
 
