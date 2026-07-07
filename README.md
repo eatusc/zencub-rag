@@ -10,6 +10,7 @@ This app is intentionally separate from the main ZenCub web and iOS repos. It re
 - Citation-oriented results using chunk metadata
 - Server-side Supabase service-role access only
 - No embeddings or generated answers yet
+- Home-page `System Map` tab visualizes the current pipeline and pending RAG layers
 
 ## Local Setup
 
@@ -30,6 +31,37 @@ OPENAI_API_KEY=...
 
 The browser never receives the service-role key. API routes own all database access.
 
+## How The Technology Works
+
+The app has two layers right now:
+
+```text
+Browser UI
+  -> /api/rag/search
+    -> Supabase RPC: search_rag_transcript_chunks
+      -> TEST table: rag_transcript_chunks
+        -> cited transcript results
+```
+
+That is retrieval, but not full generated-answer RAG yet. It finds source chunks and shows evidence.
+
+Full RAG will add this layer:
+
+```text
+User question
+  -> embed question
+    -> vector search matching embedded transcript chunks
+      -> send retrieved chunks to LLM
+        -> answer with citations
+```
+
+The important separation:
+
+- `rag_` source tables hold the copied ZenCub TEST corpus.
+- `rag_transcript_chunks` holds searchable evidence chunks with timestamps.
+- `embedding` is currently empty and will hold vector representations later.
+- API routes own all database access so secrets stay server-side.
+
 ## Data Source
 
 TEST Supabase project: `YOUR_PROJECT_REF`
@@ -49,6 +81,13 @@ Current TEST snapshot:
 - `2,298` transcripts
 - `2,844` techniques
 - `12,104` transcript chunks
+
+## Interface
+
+The home page has two tabs:
+
+- `Search`: live text search over transcript chunks.
+- `System Map`: visual explanation of the RAG data flow, table roles, current state, and next steps.
 
 ## Commands
 

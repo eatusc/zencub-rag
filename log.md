@@ -7,3 +7,7 @@ Created separate `zencub-rag` Next/TypeScript app. Added server-side Supabase wi
 ## 2026-07-07
 
 Added local Apps dashboard launcher `Run_ZenCub_RAG.command` on unique port `3021` and updated setup docs to match the dashboard-managed port.
+
+## 2026-07-07
+
+Added a home-page `System Map` tab with a visual RAG pipeline, corpus metrics, table map, and current-vs-next status. Expanded README and architecture docs, plus added `docs/RAG_TECHNOLOGY.md` for the plain-English RAG mental model.
