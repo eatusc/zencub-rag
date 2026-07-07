@@ -27,6 +27,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 OPENAI_API_KEY=...
+RAG_ANALYZE_MODEL=gpt-4o-mini
 ```
 
 The browser never receives the service-role key. API routes own all database access.
@@ -73,6 +74,7 @@ The important separation:
 - `rag_transcript_chunks` holds searchable evidence chunks with timestamps.
 - `embedding` is currently empty and will hold vector representations later.
 - API routes own all database access so secrets stay server-side.
+- `/api/rag/analyze` reruns the current search, sends the top chunks to a small/fast model, and returns a structured watch plan.
 
 ## Data Source
 
@@ -99,6 +101,7 @@ Current TEST snapshot:
 The home page has two tabs:
 
 - `Search`: live text search over transcript chunks.
+- `Analyze Results`: button shown after a search; summarizes the best watch moments and study takeaways from the current results.
 - `System Map`: visual explanation of the RAG data flow, table roles, current state, and next steps.
 
 Good test queries in the current text-search build:

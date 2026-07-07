@@ -107,6 +107,7 @@ Current:
 - TEST `rag_` snapshot tables
 - `12,104` transcript chunks
 - text-search endpoint
+- Analyze Results endpoint for grounded watch-plan summaries
 - visual search UI
 - System Map tab
 - evaluated example-query suite
@@ -115,9 +116,24 @@ Pending:
 
 - embedding backfill
 - vector search endpoint
-- chat/ask endpoint
-- answer generation with citations
+- broader chat/ask endpoint
+- answer-quality evaluation
 - evaluation set for answer quality
+
+## Analyze Results
+
+`Analyze Results` is the first generated layer.
+
+It is narrower than open-ended chat:
+
+```text
+current query
+  -> rerun top search results on the server
+    -> summarize the most useful watch moments
+      -> show timestamped sources, key details, study order, and next searches
+```
+
+This is useful before full chat because it keeps the model grounded in visible retrieved evidence.
 
 ## Evaluation System
 

@@ -22,3 +22,30 @@ export type RagSearchResponse = {
   query: string;
   results: RagSearchResult[];
 };
+
+export type RagAnalysisMoment = {
+  rank: number;
+  title: string;
+  focus: string;
+  why: string;
+  start_seconds: number;
+  end_seconds: number;
+  citation: string;
+  watch_url: string | null;
+};
+
+export type RagAnalysis = {
+  summary: string;
+  best_moments: RagAnalysisMoment[];
+  key_details: string[];
+  study_order: string[];
+  next_searches: string[];
+  caveats: string[];
+};
+
+export type RagAnalyzeResponse = {
+  query: string;
+  model: string;
+  source_count: number;
+  analysis: RagAnalysis;
+};

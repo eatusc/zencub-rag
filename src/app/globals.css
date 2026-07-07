@@ -188,6 +188,212 @@ h1 {
   padding: 12px 14px;
 }
 
+.analysis-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.analysis-action h2 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.analysis-action p:not(.section-kicker) {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.analysis-action button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 900;
+  padding: 0 15px;
+  white-space: nowrap;
+}
+
+.analysis-action button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.analysis-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+
+.analysis-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.analysis-header h2 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.analysis-header > span {
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.analysis-summary {
+  margin: 0;
+  color: #31382f;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.moment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.moment-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  padding: 12px;
+}
+
+.moment-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 900;
+}
+
+.moment-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.moment-heading h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.moment-heading span {
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.moment-item p {
+  margin: 8px 0 10px;
+  color: #31382f;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.moment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.moment-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent-strong);
+  font-weight: 900;
+  padding: 6px 9px;
+  text-decoration: none;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.analysis-grid > div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  padding: 13px;
+}
+
+.analysis-grid h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.analysis-grid ul,
+.analysis-grid ol {
+  margin: 0;
+  padding-left: 18px;
+  color: #31382f;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.next-searches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.next-searches button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 7px 9px;
+}
+
 .results-list {
   display: grid;
   gap: 10px;
@@ -648,9 +854,21 @@ h1 {
   }
 
   .summary-row,
-  .result-heading {
+  .result-heading,
+  .analysis-header,
+  .moment-heading {
     flex-direction: column;
     align-items: start;
+  }
+
+  .analysis-action,
+  .analysis-grid,
+  .moment-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .analysis-action button {
+    width: 100%;
   }
 
   .result-item {

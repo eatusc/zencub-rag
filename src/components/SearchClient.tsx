@@ -3,7 +3,7 @@
 import { Brain, Database, ExternalLink, FileText, Loader2, MessageSquare, Search, Workflow } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import { ragExamples } from "@/lib/ragExamples";
-import type { RagSearchResponse, RagSearchResult } from "@/lib/types";
+import type { RagAnalysis, RagAnalyzeResponse, RagSearchResponse, RagSearchResult } from "@/lib/types";
 
 function secondsLabel(value: number | string | null) {
   const numeric = typeof value === "string" ? Number(value) : value;
@@ -16,6 +16,10 @@ function secondsLabel(value: number | string | null) {
 
 function titleFor(result: RagSearchResult) {
   return result.metadata?.video_title || result.video_id;
+}
+
+function shortTimeRange(start: number, end: number) {
+  return `${secondsLabel(start)}-${secondsLabel(end)}`;
 }
 
 type Tab = "search" | "map";
@@ -68,7 +72,11 @@ export function SearchClient() {
   const [results, setResults] = useState<RagSearchResult[]>([]);
   const [searchedQuery, setSearchedQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<RagAnalysis | null>(null);
+  const [analysisModel, setAnalysisModel] = useState("");
 
   const resultCountLabel = useMemo(() => {
     if (!searchedQuery) return "Ready";
@@ -86,6 +94,8 @@ export function SearchClient() {
   async function runSearch(trimmed: string) {
     setLoading(true);
     setError(null);
+    setAnalysisError(null);
+    setAnalysis(null);
     try {
       const response = await fetch(`/api/rag/search?q=${encodeURIComponent(trimmed)}&limit=12`);
       const payload = (await response.json()) as RagSearchResponse & { error?: string };
@@ -98,6 +108,30 @@ export function SearchClient() {
       setSearchedQuery(trimmed);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function analyzeResults() {
+    const trimmed = searchedQuery || query.trim();
+    if (trimmed.length < 2) return;
+
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const response = await fetch("/api/rag/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: trimmed }),
+      });
+      const payload = (await response.json()) as RagAnalyzeResponse & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Analysis failed");
+      setAnalysis(payload.analysis);
+      setAnalysisModel(payload.model);
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : "Analysis failed");
+      setAnalysis(null);
+    } finally {
+      setAnalysisLoading(false);
     }
   }
 
@@ -142,6 +176,83 @@ export function SearchClient() {
           </div>
 
           {error ? <div className="error-box">{error}</div> : null}
+
+          {results.length > 0 ? (
+            <section className="analysis-action">
+              <div>
+                <p className="section-kicker">Next step</p>
+                <h2>Turn these search results into a watch plan</h2>
+                <p>Analyze the top transcript chunks and rank the most useful moments for the query.</p>
+              </div>
+              <button type="button" onClick={analyzeResults} disabled={analysisLoading}>
+                {analysisLoading ? <Loader2 aria-hidden="true" className="spin" size={18} /> : <MessageSquare aria-hidden="true" size={18} />}
+                <span>{analysisLoading ? "Analyzing..." : "Analyze Results"}</span>
+              </button>
+            </section>
+          ) : null}
+
+          {analysisError ? <div className="error-box">{analysisError}</div> : null}
+
+          {analysis ? (
+            <section className="analysis-panel">
+              <div className="analysis-header">
+                <div>
+                  <p className="section-kicker">Analysis</p>
+                  <h2>{searchedQuery || query}</h2>
+                </div>
+                <span>{analysisModel}</span>
+              </div>
+
+              <p className="analysis-summary">{analysis.summary}</p>
+
+              <div className="moment-list">
+                {analysis.best_moments.map((moment) => (
+                  <article className="moment-item" key={`${moment.rank}-${moment.title}-${moment.start_seconds}`}>
+                    <div className="moment-rank">{moment.rank}</div>
+                    <div>
+                      <div className="moment-heading">
+                        <h3>{moment.title}</h3>
+                        <span>{shortTimeRange(moment.start_seconds, moment.end_seconds)}</span>
+                      </div>
+                      <p><strong>{moment.focus}</strong> {moment.why}</p>
+                      <div className="moment-actions">
+                        <span>{moment.citation}</span>
+                        {moment.watch_url ? (
+                          <a href={moment.watch_url} target="_blank" rel="noreferrer">
+                            <ExternalLink aria-hidden="true" size={15} />
+                            Watch
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              <div className="analysis-grid">
+                <div>
+                  <h3>Key details</h3>
+                  <ul>{analysis.key_details.map((item) => <li key={item}>{item}</li>)}</ul>
+                </div>
+                <div>
+                  <h3>Study order</h3>
+                  <ol>{analysis.study_order.map((item) => <li key={item}>{item}</li>)}</ol>
+                </div>
+                <div>
+                  <h3>Next searches</h3>
+                  <div className="next-searches">
+                    {analysis.next_searches.map((item) => (
+                      <button type="button" key={item} onClick={() => useExample(item)}>{item}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3>Caveats</h3>
+                  <ul>{analysis.caveats.map((item) => <li key={item}>{item}</li>)}</ul>
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           <div className="results-list">
             {results.map((result) => (

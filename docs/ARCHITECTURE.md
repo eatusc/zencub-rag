@@ -29,6 +29,19 @@ Search tab
 5. The API returns transcript chunks with citations and metadata.
 6. The UI displays source title, timestamp, platform/channel, rank, source link, and snippet.
 
+Analyze Results flow:
+
+```text
+Search tab
+  -> POST /api/rag/analyze { query }
+    -> rerun search_rag_transcript_chunks
+      -> trim top 8 chunks
+        -> small/fast model via OPENAI_API_KEY
+          -> structured watch plan with citations
+```
+
+`/api/rag/analyze` does not trust arbitrary transcript text from the browser. It receives the query, reruns retrieval on the server, and only sends the top retrieved chunks to the model. The model is configured by `RAG_ANALYZE_MODEL` and defaults to `gpt-4o-mini`.
+
 Future vector RAG flow:
 
 ```text
