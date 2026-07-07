@@ -61,3 +61,9 @@ Ran normal Search vs Semantic Search comparisons for concept queries and saved f
 Ran another TEST embedding pass with `npm run embed:chunks -- --limit=4096 --apply`. It embedded 2,944 additional chunks before the next batch load hit a Supabase statement timeout. Coverage is now 7,296 embedded chunks out of 12,104; 4,808 remain missing vectors. Updated System Map, README, architecture, RAG technology notes, next steps, and semantic comparison docs with the new counts.
 
 Hardened `scripts/embed-rag-chunks.ts` after the timeout: removed the `created_at` sort from the missing-embedding batch select and added retry/backoff for transient load timeouts. Re-ran testing after the new embeddings: `npm run eval:queries` still passed 19/19. Focused Semantic/Ask sweep for the 10 newly added common-move queries also passed 10/10 with cited Ask answers.
+
+## 2026-07-07
+
+Ran another TEST embedding pass with `npm run embed:chunks -- --limit=2048 --apply`. It completed cleanly, increasing coverage from 7,296 to 9,344 embedded chunks out of 12,104; 2,760 chunks remain missing vectors. Updated System Map, README, architecture, RAG technology notes, next steps, and semantic comparison docs with the new counts.
+
+Testing after the pass: `npm run eval:queries` passed 19/19. Focused Semantic/Ask sweep for the 10 common-move queries passed 10/10 with cited Ask answers. Concept scenario sweep showed pure Semantic Search remains mixed on ambiguous defensive wording, but Ask hybrid retrieval returned cited answers for all checked scenarios.

@@ -79,7 +79,7 @@ User question
           -> cited answer
 ```
 
-This target is implemented as a first pass, but vector coverage is partial. TEST currently has 7,296 embedded chunks out of 12,104 total chunks. The broad text-search path remains the reliability baseline until the full embedding backfill is done.
+This target is implemented as a first pass, but vector coverage is partial. TEST currently has 9,344 embedded chunks out of 12,104 total chunks. The broad text-search path remains the reliability baseline until the full embedding backfill is done.
 
 ## Why Chunks Exist
 
@@ -101,7 +101,7 @@ Query: how do I stop someone turning into me after a pass?
 
 Text search may miss good clips if the transcript says "crossface", "underhook", or "pin the shoulders" instead. Embeddings make those conceptually related chunks retrievable.
 
-The backfill process reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding` with `embedded_at` and `embedding_model`. TEST currently has 7,296 embedded chunks and 4,808 chunks still missing vectors.
+The backfill process reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding` with `embedded_at` and `embedding_model`. TEST currently has 9,344 embedded chunks and 2,760 chunks still missing vectors.
 
 ## Good Queries To Test
 
@@ -147,7 +147,7 @@ Current:
 - text-search endpoint
 - Analyze Results endpoint for grounded watch-plan summaries
 - embedding script with TEST-project guard
-- `7,296` embedded chunks for semantic-search validation
+- `9,344` embedded chunks for semantic-search validation
 - vector search endpoint
 - Ask endpoint for generated cited answers
 - visual search UI
