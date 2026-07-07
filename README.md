@@ -55,5 +55,11 @@ Current TEST snapshot:
 ```bash
 npm run typecheck
 npm run build
-npm run dev
+npm run dev -- --port 3021
+```
+
+Local dashboard launcher:
+
+```text
+/Users/YOUR_USER/Desktop/Apps/Run_ZenCub_RAG.command
 ```
