@@ -2,6 +2,32 @@
 
 RAG means Retrieval-Augmented Generation. The model does not answer from memory alone. The app first retrieves relevant source material, puts that material into the model prompt, and asks the model to answer from that evidence.
 
+Short version:
+
+```text
+retrieve evidence -> augment the prompt -> generate a grounded answer
+```
+
+How to explain this app:
+
+```text
+ZenCub RAG turns ZenCub's BJJ transcript library into a searchable research assistant. It finds the source clips behind an answer and will eventually generate cited explanations from those clips.
+```
+
+## What People Use RAG For
+
+RAG is useful when the answer needs to come from a specific corpus, not generic model memory.
+
+Common uses:
+
+- customer-support bots grounded in a company's help docs
+- internal company knowledge search
+- legal or medical document review with citations
+- product documentation assistants
+- research assistants over papers, notes, and transcripts
+- training/tutoring systems for a specialized domain
+- private library search where the model should not invent sources
+
 ## Current App
 
 The current app is the retrieval foundation:
@@ -48,6 +74,21 @@ Query: how do I stop someone turning into me after a pass?
 ```
 
 Text search may miss good clips if the transcript says "crossface", "underhook", or "pin the shoulders" instead. Embeddings make those conceptually related chunks retrievable.
+
+## Good Queries To Test
+
+These are good for the current text-search version:
+
+| Query | Why it is useful |
+| --- | --- |
+| `knee cut` | Basic word match; should return clips about knee-cut passing details. |
+| `saddle` | Leg-lock position search; good for testing short topical queries. |
+| `crossface` | Pinning/control concept that appears across multiple passing contexts. |
+| `underhook half guard` | Multi-term BJJ concept; useful for seeing ranking quality. |
+| `guard retention` | Broad concept query with many possible source videos. |
+| `heel hook escape` | Submission-defense query; useful once embeddings are added. |
+| `single leg x` | Position-specific query; tests transcript spelling and phrasing. |
+| `kimura trap` | Named technique system; should surface focused clips if present. |
 
 ## Why Citations Matter
 

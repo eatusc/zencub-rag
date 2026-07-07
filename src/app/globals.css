@@ -429,6 +429,64 @@ h1 {
   line-height: 1.7;
 }
 
+.explain-panel h3 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.plain-copy {
+  margin: 9px 0 0;
+  color: #31382f;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.example-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 18px;
+}
+
+.query-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.query-grid button {
+  min-height: 104px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--text);
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+
+.query-grid button:hover {
+  border-color: var(--accent);
+  background: #f5faf6;
+}
+
+.query-grid strong {
+  display: block;
+  color: var(--accent-strong);
+  font-size: 15px;
+}
+
+.query-grid span {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .table-map {
   display: grid;
   gap: 14px;
@@ -509,6 +567,7 @@ h1 {
   .overview-band,
   .schema-grid,
   .flow-chart,
+  .query-grid,
   .table-row {
     grid-template-columns: minmax(0, 1fr);
   }

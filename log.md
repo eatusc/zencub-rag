@@ -11,3 +11,7 @@ Added local Apps dashboard launcher `Run_ZenCub_RAG.command` on unique port `302
 ## 2026-07-07
 
 Added a home-page `System Map` tab with a visual RAG pipeline, corpus metrics, table map, and current-vs-next status. Expanded README and architecture docs, plus added `docs/RAG_TECHNOLOGY.md` for the plain-English RAG mental model.
+
+## 2026-07-07
+
+Expanded the System Map with a plain-English RAG definition, common RAG use cases, and clickable test queries. Mirrored the explanation and query bank in README/architecture/RAG docs.

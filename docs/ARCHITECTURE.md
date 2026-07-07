@@ -55,6 +55,13 @@ The home page has two tabs:
 
 The System Map intentionally marks embeddings and generated answers as pending because the current app does not yet write vectors or call an LLM to compose answers.
 
+It also includes:
+
+- a plain-English RAG definition
+- common RAG use cases
+- clickable test queries that run against `/api/rag/search`
+- table roles for each `rag_` table
+
 ## Table Roles
 
 | Table | Role |

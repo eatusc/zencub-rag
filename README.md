@@ -33,6 +33,18 @@ The browser never receives the service-role key. API routes own all database acc
 
 ## How The Technology Works
 
+RAG means Retrieval-Augmented Generation:
+
+```text
+retrieve relevant source evidence -> add it to the prompt -> generate an answer grounded in that evidence
+```
+
+One-sentence explanation:
+
+```text
+ZenCub RAG is a BJJ transcript research system that searches ZenCub's video knowledge base and, once answer generation is added, will answer questions using cited clips instead of generic model memory.
+```
+
 The app has two layers right now:
 
 ```text
@@ -88,6 +100,17 @@ The home page has two tabs:
 
 - `Search`: live text search over transcript chunks.
 - `System Map`: visual explanation of the RAG data flow, table roles, current state, and next steps.
+
+Good test queries in the current text-search build:
+
+- `knee cut`
+- `saddle`
+- `crossface`
+- `underhook half guard`
+- `guard retention`
+- `heel hook escape`
+- `single leg x`
+- `kimura trap`
 
 ## Commands
 

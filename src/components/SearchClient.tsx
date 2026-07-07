@@ -61,6 +61,17 @@ const dataTables = [
   ["rag_transcript_chunks", "12,104", "Searchable timestamped evidence chunks"],
 ];
 
+const exampleQueries = [
+  ["knee cut", "Basic word match; should return clips about knee-cut passing details."],
+  ["saddle", "Leg-lock position search; good for testing short topical queries."],
+  ["crossface", "Pinning/control concept that appears across multiple passing contexts."],
+  ["underhook half guard", "Multi-term BJJ concept; useful for seeing ranking quality."],
+  ["guard retention", "Broad concept query with many possible source videos."],
+  ["heel hook escape", "Submission-defense query; useful once embeddings are added."],
+  ["single leg x", "Position-specific query; tests transcript spelling and phrasing."],
+  ["kimura trap", "Named technique system; should surface focused clips if present."],
+];
+
 export function SearchClient() {
   const [tab, setTab] = useState<Tab>("search");
   const [query, setQuery] = useState("knee cut");
@@ -79,6 +90,10 @@ export function SearchClient() {
     const trimmed = query.trim();
     if (trimmed.length < 2) return;
 
+    await runSearch(trimmed);
+  }
+
+  async function runSearch(trimmed: string) {
     setLoading(true);
     setError(null);
     try {
@@ -94,6 +109,12 @@ export function SearchClient() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function useExample(nextQuery: string) {
+    setQuery(nextQuery);
+    setTab("search");
+    void runSearch(nextQuery);
   }
 
   return (
@@ -195,6 +216,23 @@ export function SearchClient() {
 
           <section className="schema-grid">
             <div className="explain-panel">
+              <p className="section-kicker">Define it simply</p>
+              <h3>RAG = retrieve evidence, then generate from it</h3>
+              <p className="plain-copy">
+                Instead of asking an AI to answer from memory, RAG first searches your private corpus, pulls back the most relevant source chunks, and uses those chunks as grounded context for the answer.
+              </p>
+            </div>
+            <div className="explain-panel">
+              <p className="section-kicker">How people use it</p>
+              <h3>Answers backed by your own data</h3>
+              <p className="plain-copy">
+                Teams use RAG for support bots, internal knowledge search, legal or medical document review, product docs, research assistants, and domain-specific tutoring where citations matter.
+              </p>
+            </div>
+          </section>
+
+          <section className="schema-grid">
+            <div className="explain-panel">
               <p className="section-kicker">How a query works today</p>
               <ol>
                 <li>The browser sends the query to `/api/rag/search`.</li>
@@ -211,6 +249,21 @@ export function SearchClient() {
                 <li>Use vector similarity to retrieve meaning-matched chunks.</li>
                 <li>Send those chunks to the LLM and require cited answers.</li>
               </ol>
+            </div>
+          </section>
+
+          <section className="example-panel">
+            <div className="table-map-header">
+              <p className="section-kicker">Good test queries</p>
+              <h2>Use these to see what the current search can and cannot find</h2>
+            </div>
+            <div className="query-grid">
+              {exampleQueries.map(([example, reason]) => (
+                <button type="button" key={example} onClick={() => useExample(example)}>
+                  <strong>{example}</strong>
+                  <span>{reason}</span>
+                </button>
+              ))}
             </div>
           </section>
 
