@@ -9,8 +9,9 @@ This app is intentionally separate from the main ZenCub web and iOS repos. It re
 - Read-only transcript search over `rag_transcript_chunks`
 - Citation-oriented results using chunk metadata
 - Server-side Supabase service-role access only
-- No embeddings or generated answers yet
-- Home-page `System Map` tab visualizes the current pipeline and pending RAG layers
+- First-pass semantic search over the initial embedded chunk batch
+- Generated cited answers through `/api/rag/ask`
+- Home-page `System Map` tab visualizes the pipeline, current coverage, and remaining backfill work
 
 ## Local Setup
 
@@ -28,6 +29,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 OPENAI_API_KEY=...
 RAG_ANALYZE_MODEL=gpt-4o-mini
+RAG_ANSWER_MODEL=gpt-4o-mini
+RAG_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
 The browser never receives the service-role key. API routes own all database access.
@@ -43,10 +46,10 @@ retrieve relevant source evidence -> add it to the prompt -> generate an answer 
 One-sentence explanation:
 
 ```text
-ZenCub RAG is a BJJ transcript research system that searches ZenCub's video knowledge base and, once answer generation is added, will answer questions using cited clips instead of generic model memory.
+ZenCub RAG is a BJJ transcript research system that searches ZenCub's video knowledge base and answers questions using cited clips instead of generic model memory.
 ```
 
-The app has two layers right now:
+The app has three working layers right now:
 
 ```text
 Browser UI
@@ -56,25 +59,35 @@ Browser UI
         -> cited transcript results
 ```
 
-That is retrieval, but not full generated-answer RAG yet. It finds source chunks and shows evidence.
+That is the broad text-retrieval baseline. It finds source chunks and shows evidence.
 
-Full RAG will add this layer:
+Semantic search adds this layer:
 
 ```text
 User question
   -> embed question
     -> vector search matching embedded transcript chunks
-      -> send retrieved chunks to LLM
-        -> answer with citations
+      -> meaning-matched transcript chunks
+```
+
+Answer generation adds this layer:
+
+```text
+User question
+  -> retrieve source chunks
+    -> send chunks to LLM
+      -> answer with citations
 ```
 
 The important separation:
 
 - `rag_` source tables hold the copied ZenCub TEST corpus.
 - `rag_transcript_chunks` holds searchable evidence chunks with timestamps.
-- `embedding` is currently empty and will hold vector representations later.
+- `embedding` holds vector representations; the first 256 chunks are embedded for testing, with the full backfill still pending.
 - API routes own all database access so secrets stay server-side.
 - `/api/rag/analyze` reruns the current search, sends the top chunks to a small/fast model, and returns a structured watch plan.
+- `/api/rag/vector-search` embeds the query and calls `match_rag_transcript_chunks`.
+- `/api/rag/ask` retrieves chunks, falls back to text search when vector matches are weak, and returns a cited answer.
 
 ## Data Source
 
@@ -95,6 +108,7 @@ Current TEST snapshot:
 - `2,298` transcripts
 - `2,844` techniques
 - `12,104` transcript chunks
+- `256` embedded chunks
 
 ## Interface
 
@@ -102,6 +116,8 @@ The home page has two tabs:
 
 - `Search`: live text search over transcript chunks.
 - `Analyze Results`: button shown after a search; summarizes the best watch moments and study takeaways from the current results.
+- `Semantic Search`: embeds the query and searches the embedded chunk subset by meaning.
+- `Ask`: generates an answer using retrieved chunks and citations.
 - `System Map`: visual explanation of the RAG data flow, table roles, current state, and next steps.
 
 Good test queries in the current text-search build:
@@ -135,8 +151,12 @@ docs/evals/rag-search-eval.md
 npm run typecheck
 npm run build
 npm run eval:queries
+npm run embed:chunks -- --limit=256
+npm run embed:chunks -- --limit=256 --apply
 npm run dev -- --port 3021
 ```
+
+`embed:chunks` defaults to dry-run. Use `--apply` to write vectors. Use `--all --apply` only when you intentionally want to backfill every missing chunk in TEST.
 
 Local dashboard launcher:
 

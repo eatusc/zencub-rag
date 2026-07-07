@@ -16,6 +16,7 @@ export type RagSearchResult = {
     citation?: string | null;
   } | null;
   rank: number;
+  similarity?: number;
 };
 
 export type RagSearchResponse = {
@@ -48,4 +49,28 @@ export type RagAnalyzeResponse = {
   model: string;
   source_count: number;
   analysis: RagAnalysis;
+};
+
+export type RagAnswerCitation = {
+  title: string;
+  citation: string;
+  start_seconds: number;
+  end_seconds: number;
+  watch_url: string | null;
+};
+
+export type RagAnswer = {
+  answer: string;
+  citations: RagAnswerCitation[];
+  key_takeaways: string[];
+  follow_up_searches: string[];
+  caveats: string[];
+};
+
+export type RagAskResponse = {
+  query: string;
+  model: string;
+  retrieval: "vector" | "text";
+  source_count: number;
+  answer: RagAnswer;
 };

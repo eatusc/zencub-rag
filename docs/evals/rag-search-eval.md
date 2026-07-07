@@ -1,6 +1,6 @@
 # RAG Search Eval
 
-Generated: 2026-07-07T18:04:02.023Z
+Generated: 2026-07-07T18:50:52.717Z
 Base URL: http://localhost:3021
 Result limit: 5
 Passed: 9/9

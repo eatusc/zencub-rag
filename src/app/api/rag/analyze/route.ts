@@ -1,61 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getServerEnv } from "@/lib/env";
+import { asNumber, formatRagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
 import type { RagAnalysis, RagSearchResult } from "@/lib/types";
 
-type SearchRow = RagSearchResult & {
-  similarity?: number;
-};
-
 const RESULT_LIMIT = 8;
-
-function asNumber(value: number | string | null | undefined) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return 0;
-}
-
-function timestampUrl(url: string | null | undefined, startSeconds: number) {
-  if (!url) return null;
-
-  try {
-    const parsed = new URL(url);
-    const seconds = Math.max(0, Math.floor(startSeconds));
-    if (parsed.hostname.includes("youtube.com")) {
-      parsed.searchParams.set("t", `${seconds}s`);
-      return parsed.toString();
-    }
-    if (parsed.hostname.includes("youtu.be")) {
-      parsed.searchParams.set("t", String(seconds));
-      return parsed.toString();
-    }
-  } catch {
-    return url;
-  }
-
-  return url;
-}
-
-function formatSource(row: SearchRow, index: number) {
-  const start = asNumber(row.start_seconds);
-  const end = asNumber(row.end_seconds);
-  return {
-    id: index + 1,
-    title: row.metadata?.video_title ?? row.video_id,
-    citation: row.metadata?.citation ?? `${row.video_id} @ ${Math.floor(start)}`,
-    channel: row.metadata?.channel_name ?? row.metadata?.instructor_name ?? null,
-    start_seconds: start,
-    end_seconds: end,
-    source_url: row.metadata?.video_url ?? null,
-    watch_url: timestampUrl(row.metadata?.video_url, start),
-    rank: row.rank ?? row.similarity ?? 0,
-    text: row.text.slice(0, 1400),
-  };
-}
 
 function coerceAnalysis(value: unknown): RagAnalysis {
   const fallback: RagAnalysis = {
@@ -116,7 +66,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const sources = ((data ?? []) as SearchRow[]).map(formatSource);
+    const sources = ((data ?? []) as RagSearchResult[]).map(formatRagSource);
     if (sources.length === 0) {
       return NextResponse.json({ error: "No sources found to analyze." }, { status: 404 });
     }

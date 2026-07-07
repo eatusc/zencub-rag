@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "eval:queries": "node --experimental-strip-types scripts/evaluate-rag-examples.ts"
+    "eval:queries": "node --experimental-strip-types scripts/evaluate-rag-examples.ts",
+    "embed:chunks": "node --experimental-strip-types scripts/embed-rag-chunks.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.103.0",

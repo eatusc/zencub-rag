@@ -3,6 +3,8 @@ type ServerEnv = {
   supabaseServiceRoleKey: string;
   openaiApiKey?: string;
   ragAnalyzeModel: string;
+  ragAnswerModel: string;
+  ragEmbeddingModel: string;
 };
 
 export function getServerEnv(): ServerEnv {
@@ -22,5 +24,7 @@ export function getServerEnv(): ServerEnv {
     supabaseServiceRoleKey,
     openaiApiKey: process.env.OPENAI_API_KEY,
     ragAnalyzeModel: process.env.RAG_ANALYZE_MODEL ?? "gpt-4o-mini",
+    ragAnswerModel: process.env.RAG_ANSWER_MODEL ?? "gpt-4o-mini",
+    ragEmbeddingModel: process.env.RAG_EMBEDDING_MODEL ?? "text-embedding-3-small",
   };
 }

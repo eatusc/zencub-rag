@@ -11,7 +11,7 @@ retrieve evidence -> augment the prompt -> generate a grounded answer
 How to explain this app:
 
 ```text
-ZenCub RAG turns ZenCub's BJJ transcript library into a searchable research assistant. It finds the source clips behind an answer and will eventually generate cited explanations from those clips.
+ZenCub RAG turns ZenCub's BJJ transcript library into a searchable research assistant. It finds source clips, uses transcript chunks as evidence, and generates cited answers instead of relying on generic model memory.
 ```
 
 ## What People Use RAG For
@@ -30,7 +30,9 @@ Common uses:
 
 ## Current App
 
-The current app is the retrieval foundation:
+The current app has three layers.
+
+Text retrieval:
 
 ```text
 User query
@@ -40,7 +42,27 @@ User query
         -> transcript snippets with citations
 ```
 
-This is not full RAG yet because it does not generate an answer. It retrieves evidence.
+Semantic retrieval:
+
+```text
+User query
+  -> /api/rag/vector-search
+    -> OpenAI embedding
+      -> match_rag_transcript_chunks
+        -> meaning-ranked transcript snippets
+```
+
+Generated answers:
+
+```text
+User query
+  -> /api/rag/ask
+    -> retrieve source chunks
+      -> answer model
+        -> answer, citations, takeaways, follow-up searches, caveats
+```
+
+The generated answer layer is full RAG: it retrieves external corpus evidence, augments the model prompt with that evidence, and asks the model to answer from the retrieved sources.
 
 ## Full RAG Target
 
@@ -56,6 +78,8 @@ User question
         -> LLM prompt
           -> cited answer
 ```
+
+This target is implemented as a first pass, but vector coverage is partial. TEST currently has 256 embedded chunks out of 12,104 total chunks. The broad text-search path remains the reliability baseline until the full embedding backfill is done.
 
 ## Why Chunks Exist
 
@@ -77,7 +101,7 @@ Text search may miss good clips if the transcript says "crossface", "underhook",
 
 ## Good Queries To Test
 
-These are good for the current text-search version:
+These are good for the current text-search and Ask flows:
 
 | Query | Why it is useful |
 | --- | --- |
@@ -108,17 +132,20 @@ Current:
 - `12,104` transcript chunks
 - text-search endpoint
 - Analyze Results endpoint for grounded watch-plan summaries
+- embedding script with TEST-project guard
+- `256` embedded chunks for semantic-search validation
+- vector search endpoint
+- Ask endpoint for generated cited answers
 - visual search UI
 - System Map tab
 - evaluated example-query suite
 
 Pending:
 
-- embedding backfill
-- vector search endpoint
-- broader chat/ask endpoint
+- full embedding backfill for all `12,104` chunks
 - answer-quality evaluation
-- evaluation set for answer quality
+- vector-search evaluation set
+- deployment config for a separate hosted service
 
 ## Analyze Results
 
@@ -134,6 +161,19 @@ current query
 ```
 
 This is useful before full chat because it keeps the model grounded in visible retrieved evidence.
+
+## Ask
+
+`Ask` is the open-ended RAG answer path.
+
+```text
+current query
+  -> try semantic retrieval from embedded chunks
+    -> fall back to text retrieval if vector matches are weak
+      -> answer from retrieved source chunks only
+```
+
+It returns a compact answer, citations with watch links, key takeaways, follow-up searches, and caveats. Auto fallback matters while only part of the corpus is embedded.
 
 ## Evaluation System
 
@@ -169,3 +209,10 @@ Report:
 ```text
 docs/evals/rag-search-eval.md
 ```
+
+Manual API checks currently cover:
+
+- `/api/rag/vector-search?q=knee%20cut&limit=3`
+- `/api/rag/ask` with `How do I finish a knee cut pass?`
+
+Automated evals for vector retrieval and generated answer quality are still pending.

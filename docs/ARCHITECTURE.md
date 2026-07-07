@@ -42,31 +42,41 @@ Search tab
 
 `/api/rag/analyze` does not trust arbitrary transcript text from the browser. It receives the query, reruns retrieval on the server, and only sends the top retrieved chunks to the model. The model is configured by `RAG_ANALYZE_MODEL` and defaults to `gpt-4o-mini`.
 
-Future vector RAG flow:
+Semantic search flow:
 
 ```text
-Ask tab
-  -> embed user question
-    -> rpc("match_rag_transcript_chunks")
-      -> top semantic chunks
-        -> answer model prompt
-          -> cited answer
+Semantic Search button
+  -> GET /api/rag/vector-search?q=...
+    -> embed user question with RAG_EMBEDDING_MODEL
+      -> rpc("match_rag_transcript_chunks")
+        -> embedded transcript chunks
+          -> meaning-ranked results
 ```
 
-1. Embed transcript chunks into `rag_transcript_chunks.embedding`.
-2. Embed the user query.
-3. Call `match_rag_transcript_chunks`.
-4. Feed retrieved chunks to the answer model.
-5. Return grounded answers with citations.
+The first 256 transcript chunks are embedded in TEST for end-to-end validation. The full 12,104 chunk backfill is still pending.
+
+Ask flow:
+
+```text
+Ask button
+  -> POST /api/rag/ask { query, retrieval: "auto" }
+    -> try vector retrieval
+      -> fall back to text retrieval when vector matches are sparse or weak
+        -> trim source chunks
+          -> answer model prompt
+            -> cited answer JSON
+```
+
+`/api/rag/ask` is the first open-ended RAG endpoint. It retrieves sources server-side, sends only those sources to the answer model, and returns answer text, citations, takeaways, follow-up searches, and caveats. The answer model is configured by `RAG_ANSWER_MODEL` and defaults to `gpt-4o-mini`.
 
 ## Visual Map In The App
 
 The home page has two tabs:
 
-- `Search`: the working retrieval surface.
+- `Search`: text search, semantic search, Analyze Results, and Ask.
 - `System Map`: a visual chart of source snapshot -> chunks -> retrieval -> embeddings -> generated answers.
 
-The System Map intentionally marks embeddings and generated answers as pending because the current app does not yet write vectors or call an LLM to compose answers.
+The System Map shows embeddings and generated answers as live, with the embedded count showing current partial vector coverage.
 
 It also includes:
 
@@ -74,6 +84,7 @@ It also includes:
 - common RAG use cases
 - clickable test queries that run against `/api/rag/search`
 - table roles for each `rag_` table
+- current embedding coverage
 
 ## Example Evaluation
 
@@ -84,6 +95,8 @@ Run:
 ```bash
 npm run eval:queries
 ```
+
+Generated-answer evaluation is not automated yet. Current manual checks cover `/api/rag/ask` for knee-cut questions and verify returned answer text, retrieval mode, model, source count, citations, and watch URLs.
 
 The evaluator checks each example by calling the app API:
 

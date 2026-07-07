@@ -3,7 +3,7 @@
 import { Brain, Database, ExternalLink, FileText, Loader2, MessageSquare, Search, Workflow } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import { ragExamples } from "@/lib/ragExamples";
-import type { RagAnalysis, RagAnalyzeResponse, RagSearchResponse, RagSearchResult } from "@/lib/types";
+import type { RagAnalysis, RagAnalyzeResponse, RagAnswer, RagAskResponse, RagSearchResponse, RagSearchResult } from "@/lib/types";
 
 function secondsLabel(value: number | string | null) {
   const numeric = typeof value === "string" ? Number(value) : value;
@@ -40,20 +40,20 @@ const pipeline = [
   {
     icon: Search,
     title: "Retrieve evidence",
-    detail: "The app currently uses Postgres text search to return matching transcript chunks.",
+    detail: "Text search returns matching transcript chunks; Ask can fall back to text when vectors are sparse.",
     status: "live",
   },
   {
     icon: Brain,
     title: "Embed for meaning",
-    detail: "Next step: write embedding vectors into rag_transcript_chunks.embedding.",
-    status: "next",
+    detail: "A first batch of 256 chunks has vectors in rag_transcript_chunks.embedding for semantic search testing.",
+    status: "live",
   },
   {
     icon: MessageSquare,
     title: "Generate answers",
-    detail: "Next step: ask an LLM to answer only from retrieved chunks with citations.",
-    status: "next",
+    detail: "The Ask button retrieves sources, sends them to the answer model, and returns cited takeaways.",
+    status: "live",
   },
 ];
 
@@ -73,10 +73,14 @@ export function SearchClient() {
   const [searchedQuery, setSearchedQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [askLoading, setAskLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<RagAnalysis | null>(null);
   const [analysisModel, setAnalysisModel] = useState("");
+  const [answer, setAnswer] = useState<RagAnswer | null>(null);
+  const [answerModel, setAnswerModel] = useState("");
+  const [answerRetrieval, setAnswerRetrieval] = useState<"vector" | "text" | "">("");
 
   const resultCountLabel = useMemo(() => {
     if (!searchedQuery) return "Ready";
@@ -96,6 +100,7 @@ export function SearchClient() {
     setError(null);
     setAnalysisError(null);
     setAnalysis(null);
+    setAnswer(null);
     try {
       const response = await fetch(`/api/rag/search?q=${encodeURIComponent(trimmed)}&limit=12`);
       const payload = (await response.json()) as RagSearchResponse & { error?: string };
@@ -104,6 +109,30 @@ export function SearchClient() {
       setSearchedQuery(payload.query);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
+      setResults([]);
+      setSearchedQuery(trimmed);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runVectorSearch() {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) return;
+
+    setLoading(true);
+    setError(null);
+    setAnalysisError(null);
+    setAnalysis(null);
+    setAnswer(null);
+    try {
+      const response = await fetch(`/api/rag/vector-search?q=${encodeURIComponent(trimmed)}&limit=12`);
+      const payload = (await response.json()) as RagSearchResponse & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Semantic search failed");
+      setResults(payload.results);
+      setSearchedQuery(payload.query);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Semantic search failed");
       setResults([]);
       setSearchedQuery(trimmed);
     } finally {
@@ -132,6 +161,31 @@ export function SearchClient() {
       setAnalysis(null);
     } finally {
       setAnalysisLoading(false);
+    }
+  }
+
+  async function askQuestion() {
+    const trimmed = searchedQuery || query.trim();
+    if (trimmed.length < 2) return;
+
+    setAskLoading(true);
+    setAnalysisError(null);
+    try {
+      const response = await fetch("/api/rag/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: trimmed, retrieval: "auto" }),
+      });
+      const payload = (await response.json()) as RagAskResponse & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Ask failed");
+      setAnswer(payload.answer);
+      setAnswerModel(payload.model);
+      setAnswerRetrieval(payload.retrieval);
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : "Ask failed");
+      setAnswer(null);
+    } finally {
+      setAskLoading(false);
     }
   }
 
@@ -170,6 +224,17 @@ export function SearchClient() {
             </button>
           </form>
 
+          <div className="search-actions">
+            <button type="button" onClick={runVectorSearch} disabled={loading || query.trim().length < 2}>
+              <Brain aria-hidden="true" size={17} />
+              <span>Semantic Search</span>
+            </button>
+            <button type="button" onClick={askQuestion} disabled={askLoading || (searchedQuery || query.trim()).length < 2}>
+              {askLoading ? <Loader2 aria-hidden="true" className="spin" size={17} /> : <MessageSquare aria-hidden="true" size={17} />}
+              <span>{askLoading ? "Asking..." : "Ask"}</span>
+            </button>
+          </div>
+
           <div className="summary-row">
             <span>{resultCountLabel}</span>
             {searchedQuery ? <span>Query: {searchedQuery}</span> : <span>Text search over `rag_transcript_chunks`</span>}
@@ -192,6 +257,47 @@ export function SearchClient() {
           ) : null}
 
           {analysisError ? <div className="error-box">{analysisError}</div> : null}
+
+          {answer ? (
+            <section className="answer-panel">
+              <div className="analysis-header">
+                <div>
+                  <p className="section-kicker">Generated Answer</p>
+                  <h2>{searchedQuery || query}</h2>
+                </div>
+                <span>{answerModel} · {answerRetrieval}</span>
+              </div>
+              <p className="answer-copy">{answer.answer}</p>
+              <div className="analysis-grid">
+                <div>
+                  <h3>Takeaways</h3>
+                  <ul>{answer.key_takeaways.map((item) => <li key={item}>{item}</li>)}</ul>
+                </div>
+                <div>
+                  <h3>Citations</h3>
+                  <div className="citation-list">
+                    {answer.citations.map((citation) => (
+                      <a href={citation.watch_url ?? "#"} target="_blank" rel="noreferrer" key={`${citation.title}-${citation.start_seconds}`}>
+                        {citation.title} · {shortTimeRange(citation.start_seconds, citation.end_seconds)}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3>Follow-up searches</h3>
+                  <div className="next-searches">
+                    {answer.follow_up_searches.map((item) => (
+                      <button type="button" key={item} onClick={() => useExample(item)}>{item}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3>Caveats</h3>
+                  <ul>{answer.caveats.map((item) => <li key={item}>{item}</li>)}</ul>
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           {analysis ? (
             <section className="analysis-panel">
@@ -283,16 +389,16 @@ export function SearchClient() {
           <section className="overview-band">
             <div>
               <p className="section-kicker">Current build</p>
-              <h2>Searchable transcript evidence, not full RAG answers yet</h2>
+              <h2>Searchable transcript evidence with first-pass semantic search and answers</h2>
               <p>
-                The app reads TEST `rag_` tables, retrieves transcript chunks with citations, and shows the evidence. Embeddings and generated chat answers are the next layer.
+                The app reads TEST `rag_` tables, retrieves transcript chunks with citations, embeds an initial chunk batch for meaning search, and generates answers only from retrieved sources.
               </p>
             </div>
             <div className="metric-grid" aria-label="Corpus summary">
               <div><strong>12,104</strong><span>chunks</span></div>
               <div><strong>2,298</strong><span>transcripts</span></div>
               <div><strong>2,844</strong><span>techniques</span></div>
-              <div><strong>0</strong><span>embedded</span></div>
+              <div><strong>256</strong><span>embedded</span></div>
             </div>
           </section>
 
@@ -374,7 +480,7 @@ export function SearchClient() {
 
           <section className="schema-grid">
             <div className="explain-panel">
-              <p className="section-kicker">How a query works today</p>
+              <p className="section-kicker">How search works</p>
               <ol>
                 <li>The browser sends the query to `/api/rag/search`.</li>
                 <li>The API route uses the Supabase service role on the server.</li>
@@ -383,12 +489,12 @@ export function SearchClient() {
               </ol>
             </div>
             <div className="explain-panel">
-              <p className="section-kicker">What changes for real RAG</p>
+              <p className="section-kicker">How Ask works</p>
               <ol>
-                <li>Backfill embeddings for every transcript chunk.</li>
-                <li>Embed the user's question at query time.</li>
-                <li>Use vector similarity to retrieve meaning-matched chunks.</li>
-                <li>Send those chunks to the LLM and require cited answers.</li>
+                <li>The API embeds the user's question for semantic retrieval.</li>
+                <li>It calls `match_rag_transcript_chunks` against embedded chunks.</li>
+                <li>Auto mode falls back to text search when vector matches are weak.</li>
+                <li>The answer model receives only retrieved chunks and returns citations.</li>
               </ol>
             </div>
           </section>
