@@ -70,7 +70,7 @@ export type RagAnswer = {
 export type RagAskResponse = {
   query: string;
   model: string;
-  retrieval: "vector" | "text";
+  retrieval: "vector" | "text" | "hybrid";
   source_count: number;
   answer: RagAnswer;
 };

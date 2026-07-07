@@ -161,6 +161,51 @@ h1 {
   color: currentColor;
 }
 
+.tooltip-wrap {
+  position: relative;
+  display: inline-flex;
+  width: fit-content;
+}
+
+.tooltip-bubble {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: min(300px, calc(100vw - 36px));
+  border: 1px solid #254a33;
+  border-radius: 7px;
+  background: #173322;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.4;
+  opacity: 0;
+  padding: 9px 10px;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.tooltip-bubble::after {
+  content: "";
+  position: absolute;
+  right: 18px;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid #254a33;
+  border-bottom: 1px solid #254a33;
+  background: #173322;
+  transform: rotate(45deg);
+}
+
+.tooltip-wrap:hover .tooltip-bubble,
+.tooltip-wrap:focus-within .tooltip-bubble {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .search-actions {
   display: flex;
   flex-wrap: wrap;
@@ -915,6 +960,20 @@ h1 {
 
   .search-actions button {
     flex: 1 1 100%;
+  }
+
+  .tooltip-wrap {
+    width: 100%;
+  }
+
+  .tooltip-bubble {
+    right: auto;
+    left: 0;
+  }
+
+  .tooltip-bubble::after {
+    right: auto;
+    left: 18px;
   }
 
   .summary-row,

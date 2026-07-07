@@ -40,7 +40,7 @@ const pipeline = [
   {
     icon: Search,
     title: "Retrieve evidence",
-    detail: "Text search returns matching transcript chunks; Ask can fall back to text when vectors are sparse.",
+    detail: "Text search returns matching chunks; Ask uses hybrid evidence or text fallback when vectors are sparse.",
     status: "live",
   },
   {
@@ -80,7 +80,7 @@ export function SearchClient() {
   const [analysisModel, setAnalysisModel] = useState("");
   const [answer, setAnswer] = useState<RagAnswer | null>(null);
   const [answerModel, setAnswerModel] = useState("");
-  const [answerRetrieval, setAnswerRetrieval] = useState<"vector" | "text" | "">("");
+  const [answerRetrieval, setAnswerRetrieval] = useState<"vector" | "text" | "hybrid" | "">("");
 
   const resultCountLabel = useMemo(() => {
     if (!searchedQuery) return "Ready";
@@ -218,21 +218,36 @@ export function SearchClient() {
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search knee cut, saddle entries, crossface details..."
             />
-            <button type="submit" disabled={loading || query.trim().length < 2}>
-              {loading ? <Loader2 aria-hidden="true" className="spin" size={18} /> : <Search aria-hidden="true" size={18} />}
-              <span>Search</span>
-            </button>
+            <span className="tooltip-wrap">
+              <button type="submit" disabled={loading || query.trim().length < 2} aria-describedby="tip-normal-search">
+                {loading ? <Loader2 aria-hidden="true" className="spin" size={18} /> : <Search aria-hidden="true" size={18} />}
+                <span>Search</span>
+              </button>
+              <span className="tooltip-bubble" id="tip-normal-search" role="tooltip">
+                Keyword search across all transcript chunks. Best for exact terms like knee cut, saddle, or kimura.
+              </span>
+            </span>
           </form>
 
           <div className="search-actions">
-            <button type="button" onClick={runVectorSearch} disabled={loading || query.trim().length < 2}>
-              <Brain aria-hidden="true" size={17} />
-              <span>Semantic Search</span>
-            </button>
-            <button type="button" onClick={askQuestion} disabled={askLoading || (searchedQuery || query.trim()).length < 2}>
-              {askLoading ? <Loader2 aria-hidden="true" className="spin" size={17} /> : <MessageSquare aria-hidden="true" size={17} />}
-              <span>{askLoading ? "Asking..." : "Ask"}</span>
-            </button>
+            <span className="tooltip-wrap">
+              <button type="button" onClick={runVectorSearch} disabled={loading || query.trim().length < 2} aria-describedby="tip-semantic-search">
+                <Brain aria-hidden="true" size={17} />
+                <span>Semantic Search</span>
+              </button>
+              <span className="tooltip-bubble" id="tip-semantic-search" role="tooltip">
+                Meaning search over embedded chunks. Best for concept matches when the transcript may use different words.
+              </span>
+            </span>
+            <span className="tooltip-wrap">
+              <button type="button" onClick={askQuestion} disabled={askLoading || (searchedQuery || query.trim()).length < 2} aria-describedby="tip-ask">
+                {askLoading ? <Loader2 aria-hidden="true" className="spin" size={17} /> : <MessageSquare aria-hidden="true" size={17} />}
+                <span>{askLoading ? "Asking..." : "Ask"}</span>
+              </button>
+              <span className="tooltip-bubble" id="tip-ask" role="tooltip">
+                Generates an answer from retrieved clips, using hybrid retrieval and returning citations with watch links.
+              </span>
+            </span>
           </div>
 
           <div className="summary-row">
@@ -510,7 +525,8 @@ export function SearchClient() {
               <ol>
                 <li>The API embeds the user's question for semantic retrieval.</li>
                 <li>It calls `match_rag_transcript_chunks` against embedded chunks.</li>
-                <li>Auto mode falls back to text search when vector matches are weak.</li>
+                <li>Auto mode mixes vector and text evidence when vector matches are strong.</li>
+                <li>It falls back to text if vector matches are weak or citations come back empty.</li>
                 <li>The answer model receives only retrieved chunks and returns citations.</li>
               </ol>
             </div>

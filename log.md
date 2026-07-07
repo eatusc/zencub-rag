@@ -43,3 +43,9 @@ Added System Map panels explaining embedding vectors as numeric meaning fingerpr
 Ran two additional bounded TEST embedding passes with `npm run embed:chunks -- --limit=2048 --apply`. Coverage increased from 256 to 4,352 embedded chunks out of 12,104; 7,752 chunks remain missing vectors. Updated System Map, README, architecture, RAG technology notes, and next steps to reflect the new counts.
 
 Re-ran the 10-query semantic/Ask sweep after the backfill. All 10 vector searches returned 200 with 3 results and all 10 Ask calls returned 200. Ask used vector retrieval for `knee cut`, `underhook half guard`, `guard retention`, `single leg x`, `body lock pass`, and `heel hook escape`; it used text fallback for `saddle`, `crossface`, `kimura trap`, and `deep half`. Remaining issue: `heel hook escape` still returned 0 citations despite vector retrieval, so Ask needs a hybrid retrieval/citation guard before relying on vector-only answers broadly.
+
+## 2026-07-07
+
+Fixed the `heel hook escape` Ask failure. Root cause: vector retrieval matched back-control "hook escape" chunks with high similarity while text retrieval found leg-lock/heel-hook-adjacent evidence. Updated `/api/rag/ask` auto mode to use hybrid retrieval when vector matches are strong, text-only fallback when vector matches are weak, and a second text-only retry if generated citations are empty. Re-ran the 10-query Ask sweep: all 10 returned 200 with at least 2 citations; `heel hook escape` now falls back to text and cites `How to Build Bulletproof Defense (Without the Panic) @ 3:28`.
+
+Added hover/focus tooltips to Search, Semantic Search, and Ask explaining keyword search vs meaning search vs generated cited answers. Updated architecture/RAG docs and next steps for hybrid retrieval.

@@ -61,13 +61,14 @@ Ask flow:
 Ask button
   -> POST /api/rag/ask { query, retrieval: "auto" }
     -> try vector retrieval
-      -> fall back to text retrieval when vector matches are sparse or weak
+      -> mix vector and text evidence when vector matches are strong
+      -> fall back to text retrieval when vector matches are sparse, weak, or produce no citations
         -> trim source chunks
           -> answer model prompt
             -> cited answer JSON
 ```
 
-`/api/rag/ask` is the first open-ended RAG endpoint. It retrieves sources server-side, sends only those sources to the answer model, and returns answer text, citations, takeaways, follow-up searches, and caveats. The answer model is configured by `RAG_ANSWER_MODEL` and defaults to `gpt-4o-mini`.
+`/api/rag/ask` is the first open-ended RAG endpoint. It retrieves sources server-side, sends only those sources to the answer model, and returns answer text, citations, takeaways, follow-up searches, and caveats. Auto mode can return `hybrid`, `text`, or `vector` retrieval. The answer model is configured by `RAG_ANSWER_MODEL` and defaults to `gpt-4o-mini`.
 
 ## Visual Map In The App
 

@@ -8,6 +8,7 @@ import type { RagAnswer, RagSearchResult } from "@/lib/types";
 const RESULT_LIMIT = 8;
 const MIN_VECTOR_RESULTS = 3;
 const MIN_VECTOR_TOP_SIMILARITY = 0.5;
+type RetrievalMode = "vector" | "text" | "hybrid";
 
 function coerceAnswer(value: unknown): RagAnswer {
   const fallback: RagAnswer = {
@@ -70,6 +71,86 @@ async function textResults(query: string, limit: number) {
   return (data ?? []) as RagSearchResult[];
 }
 
+function mergeHybridResults(vectorRows: RagSearchResult[], textRows: RagSearchResult[], limit: number) {
+  const rows: RagSearchResult[] = [];
+  const seen = new Set<string>();
+
+  const add = (row: RagSearchResult | undefined) => {
+    if (!row || seen.has(row.id)) return;
+    seen.add(row.id);
+    rows.push(row);
+  };
+
+  for (let index = 0; rows.length < limit && index < Math.max(vectorRows.length, textRows.length); index += 1) {
+    if (index < Math.ceil(limit / 2)) add(vectorRows[index]);
+    add(textRows[index]);
+  }
+
+  for (const row of [...vectorRows, ...textRows]) {
+    if (rows.length >= limit) break;
+    add(row);
+  }
+
+  return rows.slice(0, limit);
+}
+
+async function buildSources(query: string, requestedRetrieval: "text" | "vector" | "auto", openai: OpenAI, env: ReturnType<typeof getServerEnv>) {
+  if (requestedRetrieval === "text") {
+    return { retrieval: "text" as RetrievalMode, rows: await textResults(query, RESULT_LIMIT) };
+  }
+
+  if (requestedRetrieval === "vector") {
+    return { retrieval: "vector" as RetrievalMode, rows: await vectorResults(query, RESULT_LIMIT, openai, env) };
+  }
+
+  const vectorRows = await vectorResults(query, RESULT_LIMIT, openai, env);
+  const topVectorSimilarity = vectorRows[0]?.similarity ?? vectorRows[0]?.rank ?? 0;
+  const shouldUseTextOnly = vectorRows.length < MIN_VECTOR_RESULTS || topVectorSimilarity < MIN_VECTOR_TOP_SIMILARITY;
+
+  const textRows = await textResults(query, RESULT_LIMIT);
+  if (shouldUseTextOnly) {
+    return { retrieval: "text" as RetrievalMode, rows: textRows };
+  }
+
+  return { retrieval: "hybrid" as RetrievalMode, rows: mergeHybridResults(vectorRows, textRows, RESULT_LIMIT) };
+}
+
+async function generateAnswer(query: string, rows: RagSearchResult[], openai: OpenAI, env: ReturnType<typeof getServerEnv>) {
+  const sources = rows.map(formatRagSource);
+  const completion = await openai.chat.completions.create({
+    model: env.ragAnswerModel,
+    temperature: 0.2,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are a concise BJJ research assistant.",
+          "Answer only from the provided transcript chunks.",
+          "Do not invent techniques, videos, timestamps, or claims.",
+          "If evidence is weak, say so in caveats.",
+          "Return valid JSON only with keys: answer, citations, key_takeaways, follow_up_searches, caveats.",
+          "citations must be copied from provided sources and include title, citation, start_seconds, end_seconds, watch_url.",
+          "If any source supports the answer, include at least one citation.",
+          "Use short paragraphs and practical jiu-jitsu language.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          query,
+          task: "Answer the question using only these retrieved transcript chunks.",
+          sources,
+        }),
+      },
+    ],
+  });
+
+  const content = completion.choices[0]?.message.content ?? "{}";
+  const parsed = JSON.parse(content) as unknown;
+  return { answer: coerceAnswer(parsed), sourceCount: sources.length };
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({})) as { query?: unknown; retrieval?: unknown };
   const query = typeof body.query === "string" ? body.query.trim() : "";
@@ -86,65 +167,26 @@ export async function POST(request: NextRequest) {
     }
 
     const openai = new OpenAI({ apiKey: env.openaiApiKey });
-    let retrieval: "vector" | "text" = "text";
-    let rows: RagSearchResult[] = [];
-
-    if (requestedRetrieval !== "text") {
-      rows = await vectorResults(query, RESULT_LIMIT, openai, env);
-      retrieval = "vector";
-    }
-
-    const topVectorSimilarity = rows[0]?.similarity ?? rows[0]?.rank ?? 0;
-    const shouldFallbackToText = requestedRetrieval === "auto"
-      && (rows.length < MIN_VECTOR_RESULTS || topVectorSimilarity < MIN_VECTOR_TOP_SIMILARITY);
-
-    if (requestedRetrieval === "text" || shouldFallbackToText) {
-      rows = await textResults(query, RESULT_LIMIT);
-      retrieval = "text";
-    }
+    let { retrieval, rows } = await buildSources(query, requestedRetrieval, openai, env);
 
     if (rows.length === 0) {
       return NextResponse.json({ error: "No sources found to answer from." }, { status: 404 });
     }
 
-    const sources = rows.map(formatRagSource);
-    const completion = await openai.chat.completions.create({
-      model: env.ragAnswerModel,
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You are a concise BJJ research assistant.",
-            "Answer only from the provided transcript chunks.",
-            "Do not invent techniques, videos, timestamps, or claims.",
-            "If evidence is weak, say so in caveats.",
-            "Return valid JSON only with keys: answer, citations, key_takeaways, follow_up_searches, caveats.",
-            "citations must be copied from provided sources and include title, citation, start_seconds, end_seconds, watch_url.",
-            "Use short paragraphs and practical jiu-jitsu language.",
-          ].join(" "),
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            query,
-            task: "Answer the question using only these retrieved transcript chunks.",
-            sources,
-          }),
-        },
-      ],
-    });
-
-    const content = completion.choices[0]?.message.content ?? "{}";
-    const parsed = JSON.parse(content) as unknown;
-    const answer = coerceAnswer(parsed);
+    let { answer, sourceCount } = await generateAnswer(query, rows, openai, env);
+    if (requestedRetrieval === "auto" && retrieval !== "text" && answer.citations.length === 0) {
+      rows = await textResults(query, RESULT_LIMIT);
+      retrieval = "text";
+      const retry = await generateAnswer(query, rows, openai, env);
+      answer = retry.answer;
+      sourceCount = retry.sourceCount;
+    }
 
     return NextResponse.json({
       query,
       model: env.ragAnswerModel,
       retrieval,
-      source_count: sources.length,
+      source_count: sourceCount,
       answer,
     });
   } catch (error) {

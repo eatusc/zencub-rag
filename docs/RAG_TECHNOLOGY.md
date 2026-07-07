@@ -173,11 +173,12 @@ This is useful before full chat because it keeps the model grounded in visible r
 ```text
 current query
   -> try semantic retrieval from embedded chunks
-    -> fall back to text retrieval if vector matches are weak
+    -> mix vector and text evidence when vector matches are strong
+    -> fall back to text retrieval if vector matches are weak or citations are empty
       -> answer from retrieved source chunks only
 ```
 
-It returns a compact answer, citations with watch links, key takeaways, follow-up searches, and caveats. Auto fallback matters while only part of the corpus is embedded.
+It returns a compact answer, citations with watch links, key takeaways, follow-up searches, and caveats. Hybrid retrieval and citation fallback matter while only part of the corpus is embedded.
 
 ## Evaluation System
 
