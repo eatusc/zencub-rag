@@ -9,3 +9,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Local design reference export (not part of the shipped app)
+design-mockup/
