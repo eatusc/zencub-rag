@@ -1,13 +1,13 @@
 # Architecture
 
-`zencub-rag` is a separate app that treats ZenCub TEST Supabase `rag_` tables as its retrieval corpus.
+`zencub-rag` is a standalone RAG app that treats a Supabase `rag_` table set of BJJ video-transcript data as its retrieval corpus.
 
 ## Boundaries
 
-- This repo owns RAG UI, RAG API routes, embedding jobs, and answer generation.
-- Main ZenCub remains the source system for import/extraction/product workflows.
+- This repo owns the RAG UI, RAG API routes, embedding jobs, and answer generation.
+- Transcript ingestion, transcription, and technique extraction happen in an upstream pipeline, outside this repo.
 - The RAG app should not write to non-`rag_` tables.
-- PROD data should only enter this app through deliberate snapshot/sync jobs.
+- Source data enters through deliberate sync jobs, never live writes.
 
 ## Retrieval Flow
 
@@ -53,7 +53,7 @@ Semantic Search button
           -> meaning-ranked results
 ```
 
-All 12,104 transcript chunks are embedded in TEST for end-to-end validation.
+All 12,104 transcript chunks are embedded for end-to-end validation.
 
 Ask flow:
 

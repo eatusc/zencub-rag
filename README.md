@@ -2,7 +2,7 @@
 
 A Retrieval-Augmented Generation app that turns a BJJ (Brazilian Jiu-Jitsu) video-transcript library into a searchable, citation-backed research assistant. It runs hybrid retrieval (keyword + semantic), fuses the results, reranks them by intent, and generates answers grounded only in the retrieved source clips — every claim links back to a video and timestamp.
 
-It reads a read-only Supabase snapshot of transcript data and never writes to source application tables. All database access is server-side; secrets never reach the browser.
+It reads a read-only Supabase dataset of transcript data and never writes back to the source tables. All database access is server-side; secrets never reach the browser.
 
 ## Screenshots
 
@@ -58,7 +58,7 @@ retrieve relevant source evidence -> add it to the prompt -> generate an answer 
 One-sentence explanation:
 
 ```text
-ZenCub RAG is a BJJ transcript research system that searches ZenCub's video knowledge base and answers questions using cited clips instead of generic model memory.
+ZenCub RAG is a BJJ transcript research system that searches a BJJ video knowledge base and answers questions using cited clips instead of generic model memory.
 ```
 
 The app has three working layers right now:
@@ -67,7 +67,7 @@ The app has three working layers right now:
 Browser UI
   -> /api/rag/search
     -> Supabase RPC: search_rag_transcript_chunks
-      -> TEST table: rag_transcript_chunks
+      -> table: rag_transcript_chunks
         -> cited transcript results
 ```
 
@@ -93,9 +93,9 @@ User question
 
 The important separation:
 
-- `rag_` source tables hold the copied ZenCub TEST corpus.
+- `rag_` source tables hold the BJJ video-transcript corpus.
 - `rag_transcript_chunks` holds searchable evidence chunks with timestamps.
-- `embedding` holds vector representations; 12,104 chunks are embedded; the TEST transcript corpus has full vector coverage.
+- `embedding` holds vector representations; 12,104 chunks are embedded; the transcript corpus has full vector coverage.
 - API routes own all database access so secrets stay server-side.
 - `/api/rag/analyze` reruns the current search, sends the top chunks to a small/fast model, and returns a structured watch plan.
 - `/api/rag/vector-search` embeds the query and calls `match_rag_transcript_chunks`.
@@ -103,7 +103,7 @@ The important separation:
 
 ## Data Source
 
-TEST Supabase project: `YOUR_PROJECT_REF` (set via `NEXT_PUBLIC_SUPABASE_URL`)
+Supabase project: `YOUR_PROJECT_REF` (set via `NEXT_PUBLIC_SUPABASE_URL`)
 
 Tables used:
 
@@ -114,7 +114,7 @@ Tables used:
 - `rag_creators`
 - `rag_transcript_chunks`
 
-Current TEST snapshot:
+Current dataset:
 
 - `2,402` videos
 - `2,298` transcripts

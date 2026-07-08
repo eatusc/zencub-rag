@@ -12,9 +12,9 @@ Implemented the retrieval upgrades in app code (`src/lib/ragRetrieval.ts`):
 - LLM reranker (`rerankWithLLM`, uses `RAG_RERANK_MODEL`, default `gpt-4o-mini`, toggle `RAG_RERANK=off`) reorders the diverse candidate pool by intent before generation, falling back to input order on any error. Directly targets the documented semantic-drift-on-defensive-queries weakness.
 - Technique enrichment (`enrichWithTechniques`) joins each retrieved chunk's timespan to the overlapping `rag_techniques` row and passes technique/position/difficulty/gi_nogi into the answer prompt and `formatRagSource`. Previously `rag_techniques` (2,844 rows) was unused by retrieval.
 
-Added `docs/migrations/2026-07-07-hybrid-rrf-index-cleanup.sql` for the pieces this app cannot run over PostgREST (no DDL/DML-of-that-kind access): the HNSW `vector_cosine_ops` index (a no-op at 12k rows, needed before PROD scale), a GIN FTS index, an optional server-side `hybrid_search_rag_chunks` RRF function to push fusion into Postgres later, and an optional hard-delete of sub-30-token chunks. These run in the Supabase SQL editor.
+Added `docs/migrations/2026-07-07-hybrid-rrf-index-cleanup.sql` for the pieces this app cannot run over PostgREST (no DDL/DML-of-that-kind access): the HNSW `vector_cosine_ops` index (a no-op at 12k rows, needed before production scale), a GIN FTS index, an optional server-side `hybrid_search_rag_chunks` RRF function to push fusion into Postgres later, and an optional hard-delete of sub-30-token chunks. These run in the Supabase SQL editor.
 
-Deferred small-to-big chunking: it requires re-chunking/re-ingestion owned by the main ZenCub import pipeline, not this read-only app.
+Deferred small-to-big chunking: it requires re-chunking/re-ingestion owned by the upstream ingestion pipeline, not this read-only app.
 
 Verification (against the running dev server, hot-reloaded): `npm run typecheck` clean; `npm run eval:queries` 19/19 (regenerated `docs/evals/rag-search-eval.md`); `search` for `heel hook` now caps at 2 per video and pulls in a third source with min text length 907; `ask` for `how do I stop someone from passing my guard` returned `hybrid` + `reranked` with guard-pass-prevention citations (Firas Zahabi, Danaher), and `defend leg locks safely` — the documented drift case — now returns a defense-oriented cited answer instead of attack clips.
 

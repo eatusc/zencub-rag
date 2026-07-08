@@ -3,7 +3,7 @@ import { createServerSupabase } from "@/lib/supabase";
 import type { RagSearchResult } from "@/lib/types";
 
 // Minimum chunk length to be worth retrieving. ~30 tokens ≈ 120 chars.
-// The TEST corpus has ~419 chunks under 20 tokens and ~802 under 50 that are
+// The corpus has ~419 chunks under 20 tokens and ~802 under 50 that are
 // mostly transcription fragments; filtering them at read time keeps them out of
 // results without a destructive delete.
 export const MIN_CHUNK_CHARS = 120;

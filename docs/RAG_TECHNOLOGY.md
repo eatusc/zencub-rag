@@ -11,7 +11,7 @@ retrieve evidence -> augment the prompt -> generate a grounded answer
 How to explain this app:
 
 ```text
-ZenCub RAG turns ZenCub's BJJ transcript library into a searchable research assistant. It finds source clips, uses transcript chunks as evidence, and generates cited answers instead of relying on generic model memory.
+ZenCub RAG turns a BJJ video-transcript library into a searchable research assistant. It finds source clips, uses transcript chunks as evidence, and generates cited answers instead of relying on generic model memory.
 ```
 
 ## What People Use RAG For
@@ -79,7 +79,7 @@ User question
           -> cited answer
 ```
 
-This target is implemented as a first pass. TEST currently has full vector coverage: 12,104 embedded chunks out of 12,104 total chunks.
+This target is implemented as a first pass. The corpus currently has full vector coverage: 12,104 embedded chunks out of 12,104 total chunks.
 
 ## Why Chunks Exist
 
@@ -101,7 +101,7 @@ Query: how do I stop someone turning into me after a pass?
 
 Text search may miss good clips if the transcript says "crossface", "underhook", or "pin the shoulders" instead. Embeddings make those conceptually related chunks retrievable.
 
-The backfill process reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding` with `embedded_at` and `embedding_model`. TEST currently has 12,104 embedded chunks and 0 chunks missing vectors.
+The backfill process reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding` with `embedded_at` and `embedding_model`. The corpus currently has 12,104 embedded chunks and 0 chunks missing vectors.
 
 ## Good Queries To Test
 
@@ -142,11 +142,11 @@ That lets you inspect whether the answer is grounded in the right BJJ evidence.
 
 Current:
 
-- TEST `rag_` snapshot tables
+- `rag_` corpus tables
 - `12,104` transcript chunks
 - text-search endpoint
 - Analyze Results endpoint for grounded watch-plan summaries
-- embedding script with TEST-project guard
+- embedding script with a project-ref safety guard
 - `12,104` embedded chunks for semantic-search validation
 - vector search endpoint
 - Ask endpoint for generated cited answers

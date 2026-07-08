@@ -1,5 +1,5 @@
 -- ZenCub RAG — database-side retrieval upgrades
--- Run these in the Supabase SQL editor for the TEST project (YOUR_PROJECT_REF).
+-- Run these in the Supabase SQL editor for your project.
 -- The app implements RRF hybrid fusion, per-video diversity, degenerate-chunk
 -- filtering, LLM reranking, and technique enrichment in application code
 -- (src/lib/ragRetrieval.ts) because the app only has PostgREST access. The
@@ -7,9 +7,9 @@
 -- into Postgres and add the index/cleanup that need DDL/DML this app cannot run.
 
 -- ---------------------------------------------------------------------------
--- 1. HNSW vector index (do before scaling past the TEST corpus)
+-- 1. HNSW vector index (do before scaling past the current corpus)
 -- At 12,104 rows a sequential scan is already fast, so this is a no-op for
--- latency today, but the PROD corpus needs it. Cosine ops match the app's
+-- latency today, but a production-scale corpus needs it. Cosine ops match the app's
 -- match_rag_transcript_chunks similarity.
 -- ---------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS rag_transcript_chunks_embedding_hnsw
@@ -82,7 +82,7 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 3. Optional: hard-delete degenerate chunks instead of filtering at read time
 -- The app already filters chunks under ~120 chars, so this is only if you want
--- to shrink the corpus. Inspect first, then delete. DESTRUCTIVE — TEST only.
+-- to shrink the corpus. Inspect first, then delete. DESTRUCTIVE and irreversible.
 -- ---------------------------------------------------------------------------
 -- SELECT count(*) FROM rag_transcript_chunks WHERE token_count < 30;   -- preview
 -- DELETE FROM rag_transcript_chunks WHERE token_count < 30;            -- ~800 rows

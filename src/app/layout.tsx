@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "ZenCub RAG",
-  description: "Internal transcript retrieval app for ZenCub RAG experiments.",
+  description: "A RAG app for searching BJJ video transcripts and generating cited answers.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

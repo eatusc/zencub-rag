@@ -27,8 +27,8 @@ type Tab = "search" | "map";
 const pipeline = [
   {
     icon: Database,
-    title: "Source snapshot",
-    detail: "PROD transcript/video/technique rows are copied into TEST-only rag_ tables.",
+    title: "Source dataset",
+    detail: "Video, transcript, and technique rows are loaded into read-only rag_ tables.",
     status: "done",
   },
   {
@@ -406,7 +406,7 @@ export function SearchClient() {
               <p className="section-kicker">Current build</p>
               <h2>Searchable transcript evidence with semantic search and answers</h2>
               <p>
-                The app reads TEST `rag_` tables, retrieves transcript chunks with citations, embeds the full chunk corpus for meaning search, and generates answers only from retrieved sources.
+                The app reads the `rag_` tables, retrieves transcript chunks with citations, embeds the full chunk corpus for meaning search, and generates answers only from retrieved sources.
               </p>
             </div>
             <div className="metric-grid" aria-label="Corpus summary">
@@ -448,7 +448,7 @@ export function SearchClient() {
               <p className="section-kicker">Backfill job</p>
               <h3>What the 12,104 embedded chunks are</h3>
               <p className="plain-copy">
-                The job reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding`. All 12,104 transcript chunks are embedded now, so vector search can search the full TEST transcript corpus.
+                The job reads `rag_transcript_chunks.text`, sends each chunk to the embedding model, then writes the returned vector into `rag_transcript_chunks.embedding`. All 12,104 transcript chunks are embedded now, so vector search can search the full transcript corpus.
               </p>
             </div>
           </section>
@@ -516,7 +516,7 @@ export function SearchClient() {
               <ol>
                 <li>The browser sends the query to `/api/rag/search`.</li>
                 <li>The API route uses the Supabase service role on the server.</li>
-                <li>Supabase runs `search_rag_transcript_chunks` against TEST chunks.</li>
+                <li>Supabase runs `search_rag_transcript_chunks` against the corpus chunks.</li>
                 <li>The UI renders snippets with title, timestamp, source URL, and rank.</li>
               </ol>
             </div>
@@ -555,8 +555,8 @@ export function SearchClient() {
 
           <section className="table-map">
             <div className="table-map-header">
-              <p className="section-kicker">TEST data map</p>
-              <h2>`rag_` tables copied from ZenCub PROD source data</h2>
+              <p className="section-kicker">Data map</p>
+              <h2>`rag_` tables holding the BJJ video-transcript dataset</h2>
             </div>
             <div className="table-rows">
               {dataTables.map(([name, count, purpose]) => (

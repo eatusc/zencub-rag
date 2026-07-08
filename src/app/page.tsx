@@ -8,7 +8,7 @@ export default function Home() {
           <p className="eyebrow">ZenCub RAG</p>
           <h1>Transcript Search</h1>
         </div>
-        <div className="status-pill">TEST corpus</div>
+        <div className="status-pill">Read-only corpus</div>
       </header>
 
       <SearchClient />
