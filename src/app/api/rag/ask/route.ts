@@ -12,6 +12,7 @@ import {
 } from "@/lib/ragRetrieval";
 import { asNumber, formatRagSource, type RagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
+import { refineResultTimestamps } from "@/lib/timestampRefinement";
 import type { RagAnswer, RagSearchResult } from "@/lib/types";
 
 const RESULT_LIMIT = 8;
@@ -173,7 +174,7 @@ export async function POST(request: NextRequest) {
     const reranked = env.ragRerankEnabled
       ? await rerankWithLLM(query, pool, openai, env.ragRerankModel, RESULT_LIMIT)
       : pool;
-    const top = reranked.slice(0, RESULT_LIMIT);
+    const top = await refineResultTimestamps(query, reranked.slice(0, RESULT_LIMIT));
     const enriched = await enrichWithTechniques(top);
     const sources = enriched.map(({ row, technique }, index) => formatRagSource(row, index, technique));
 

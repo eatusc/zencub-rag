@@ -4,6 +4,7 @@ import { getServerEnv } from "@/lib/env";
 import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { asNumber, formatRagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
+import { refineResultTimestamps } from "@/lib/timestampRefinement";
 import type { RagAnalysis, RagSearchResult } from "@/lib/types";
 
 const RESULT_LIMIT = 8;
@@ -67,7 +68,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const rows = capPerVideo(filterDegenerate((data ?? []) as RagSearchResult[])).slice(0, RESULT_LIMIT);
+    const coarseRows = capPerVideo(filterDegenerate((data ?? []) as RagSearchResult[])).slice(0, RESULT_LIMIT);
+    const rows = await refineResultTimestamps(query, coarseRows);
     const sources = rows.map((row, index) => formatRagSource(row, index));
     if (sources.length === 0) {
       return NextResponse.json({ error: "No sources found to analyze." }, { status: 404 });

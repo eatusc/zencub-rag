@@ -22,7 +22,7 @@ import {
   Workflow,
   Zap,
 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import type {
   RagAnalysis,
   RagAnalyzeResponse,
@@ -31,6 +31,7 @@ import type {
   RagSearchResponse,
   RagSearchResult,
 } from "@/lib/types";
+import { timestampUrl } from "@/lib/ragUtils";
 
 function secondsLabel(value: number | string | null | undefined) {
   const numeric = typeof value === "string" ? Number(value) : value;
@@ -271,9 +272,27 @@ export function SearchClient() {
 
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
-              <ActionButton onClick={runVectorSearch} loading={loading && mode === "semantic"} icon={Sparkles} label="Semantic Search" />
-              <ActionButton onClick={analyzeResults} loading={analysisLoading} icon={Brain} label="Analyse Results" />
-              <ActionButton onClick={askQuestion} loading={askLoading} icon={MessageSquare} label="Ask AI" />
+              <ActionButton
+                onClick={runVectorSearch}
+                loading={loading && mode === "semantic"}
+                icon={Sparkles}
+                label="Semantic Search"
+                tooltip="Search transcript chunks by meaning, even when they use different words than your query."
+              />
+              <ActionButton
+                onClick={analyzeResults}
+                loading={analysisLoading}
+                icon={Brain}
+                label="Analyze Results"
+                tooltip="Find the top keyword matches, then summarize the best watch moments, key details, and study order."
+              />
+              <ActionButton
+                onClick={askQuestion}
+                loading={askLoading}
+                icon={MessageSquare}
+                label="Ask AI"
+                tooltip="Use hybrid retrieval to generate an answer grounded in transcript sources, with citations."
+              />
             </div>
 
             {/* Summary row */}
@@ -517,7 +536,7 @@ export function SearchClient() {
                     </div>
                     {r.metadata?.video_url && (
                       <a
-                        href={r.metadata.video_url}
+                        href={timestampUrl(r.metadata.video_url, Number(r.start_seconds) || 0) ?? r.metadata.video_url}
                         target="_blank"
                         rel="noreferrer"
                         className="self-start flex items-center justify-center w-9 h-9 shrink-0 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
@@ -558,17 +577,41 @@ function TabButton({ active, onClick, icon: Icon, label }: { active: boolean; on
   );
 }
 
-function ActionButton({ onClick, loading, icon: Icon, label }: { onClick: () => void; loading: boolean; icon: typeof Search; label: string }) {
+function ActionButton({
+  onClick,
+  loading,
+  icon: Icon,
+  label,
+  tooltip,
+}: {
+  onClick: () => void;
+  loading: boolean;
+  icon: typeof Search;
+  label: string;
+  tooltip: string;
+}) {
+  const tooltipId = useId();
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={loading}
-      className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border bg-card text-sm font-semibold text-foreground hover:border-foreground/30 transition-colors disabled:opacity-60"
-    >
-      {loading ? <Loader2 size={15} className="animate-spin" /> : <Icon size={15} />}
-      {label}
-    </button>
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={loading}
+        aria-describedby={tooltipId}
+        className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border bg-card text-sm font-semibold text-foreground hover:border-foreground/30 transition-colors disabled:opacity-60"
+      >
+        {loading ? <Loader2 size={15} className="animate-spin" /> : <Icon size={15} />}
+        {label}
+      </button>
+      <span
+        id={tooltipId}
+        role="tooltip"
+        className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-64 -translate-x-1/2 rounded-lg bg-foreground px-3 py-2 text-center text-xs font-medium leading-relaxed text-background opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        {tooltip}
+      </span>
+    </div>
   );
 }
 

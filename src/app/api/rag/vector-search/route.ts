@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { getServerEnv } from "@/lib/env";
 import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { createServerSupabase } from "@/lib/supabase";
+import { refineResultTimestamps } from "@/lib/timestampRefinement";
 import type { RagSearchResult } from "@/lib/types";
 
 export async function GET(request: NextRequest) {
@@ -46,7 +47,8 @@ export async function GET(request: NextRequest) {
       ...result,
       rank: result.similarity ?? result.rank ?? 0,
     }));
-    const results = capPerVideo(filterDegenerate(ranked)).slice(0, limit);
+    const coarseResults = capPerVideo(filterDegenerate(ranked)).slice(0, limit);
+    const results = await refineResultTimestamps(query, coarseResults);
 
     return NextResponse.json({
       query,

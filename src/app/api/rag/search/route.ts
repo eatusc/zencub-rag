@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { createServerSupabase } from "@/lib/supabase";
+import { refineResultTimestamps } from "@/lib/timestampRefinement";
 import type { RagSearchResult } from "@/lib/types";
 
 export async function GET(request: NextRequest) {
@@ -25,7 +26,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const results = capPerVideo(filterDegenerate((data ?? []) as RagSearchResult[])).slice(0, limit);
+    const coarseResults = capPerVideo(filterDegenerate((data ?? []) as RagSearchResult[])).slice(0, limit);
+    const results = await refineResultTimestamps(query, coarseResults);
 
     return NextResponse.json({
       query,
