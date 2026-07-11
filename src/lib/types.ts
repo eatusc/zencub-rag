@@ -75,3 +75,24 @@ export type RagAskResponse = {
   source_count: number;
   answer: RagAnswer;
 };
+
+// One executed node in the LangGraph run, surfaced so the UI can show the graph
+// trace side-by-side with the classic pipeline.
+export type RagGraphTraceEntry = {
+  node: string;
+  label: string;
+  detail: string;
+  ms: number;
+};
+
+export type RagGraphAskResponse = {
+  query: string;
+  engine: "langgraph";
+  model: string;
+  retrieval: "vector" | "text" | "hybrid";
+  reranked: boolean;
+  source_count: number;
+  answer: RagAnswer;
+  trace: RagGraphTraceEntry[];
+  total_ms: number;
+};

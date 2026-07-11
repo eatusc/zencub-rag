@@ -4,6 +4,7 @@ import {
   BarChart3,
   BookOpen,
   Brain,
+  ChevronDown,
   ChevronRight,
   CheckCircle2,
   Clock,
@@ -11,6 +12,8 @@ import {
   Database,
   Dumbbell,
   ExternalLink,
+  GitBranch,
+  GitCompareArrows,
   Lightbulb,
   Link2,
   ListOrdered,
@@ -18,6 +21,7 @@ import {
   MessageSquare,
   Search,
   Sparkles,
+  Timer,
   Users,
   Workflow,
   Zap,
@@ -28,6 +32,8 @@ import type {
   RagAnalyzeResponse,
   RagAnswer,
   RagAskResponse,
+  RagGraphAskResponse,
+  RagGraphTraceEntry,
   RagSearchResponse,
   RagSearchResult,
 } from "@/lib/types";
@@ -51,6 +57,35 @@ function scoreFor(result: RagSearchResult) {
 
 type Tab = "search" | "map";
 type Mode = "keyword" | "semantic";
+
+// One engine's result inside the side-by-side comparison. `trace`/`serverMs` are
+// only populated for the LangGraph engine, which reports its executed nodes.
+type EngineResult = {
+  engine: "classic" | "langgraph";
+  label: string;
+  sublabel: string;
+  answer: RagAnswer;
+  model: string;
+  retrieval: string;
+  reranked: boolean;
+  sourceCount: number;
+  clientMs: number;
+  serverMs?: number;
+  trace?: RagGraphTraceEntry[];
+};
+
+type Comparison = { classic: EngineResult; graph: EngineResult } | null;
+
+async function postTimed<T>(url: string, body: unknown) {
+  const started = performance.now();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = (await res.json()) as T & { error?: string };
+  return { ok: res.ok, ms: Math.round(performance.now() - started), payload };
+}
 
 /* ---- System Map static content (accurate to the real corpus) ---- */
 const PIPELINE = [
@@ -104,6 +139,54 @@ const TABLE_ROWS: Array<{ table: string; count: string; type: "Core" | "Meta" | 
   { table: "rag_transcript_chunks", count: "12,104", type: "Vectors", desc: "Searchable timestamped chunks + embedding vectors." },
 ];
 
+/* ---- Engine architecture (Classic vs LangGraph) ---- */
+const ENGINES: Array<{ key: "classic" | "langgraph"; name: string; sub: string; icon: typeof Search; how: string; points: string[] }> = [
+  {
+    key: "classic",
+    name: "Classic",
+    sub: "OpenAI SDK · hand-wired",
+    icon: Cpu,
+    how: "Imperative. One route handler calls each stage in order with plain async/await.",
+    points: [
+      "Linear control flow, top to bottom",
+      "Manual Promise.all for parallel retrieval",
+      "try/catch fallback around each stage",
+      "Values threaded by hand between steps",
+      "No built-in tracing or timing",
+    ],
+  },
+  {
+    key: "langgraph",
+    name: "LangGraph",
+    sub: "StateGraph · LangChain",
+    icon: Workflow,
+    how: "Declarative. Stages are nodes; a compiled StateGraph routes typed state between them.",
+    points: [
+      "Typed shared state via Annotation channels",
+      "Each node is (state) → partial state update",
+      "Edges declare flow; conditionals branch it",
+      "Calls run through ChatOpenAI / OpenAIEmbeddings",
+      "Per-node trace + timing captured for free",
+    ],
+  },
+];
+
+// The five nodes of the LangGraph, in execution order. Same math the classic
+// engine runs — here each stage is a graph node instead of a function call.
+const GRAPH_NODES: Array<{ id: string; icon: typeof Search; tech: string; desc: string }> = [
+  { id: "retrieve", icon: Search, tech: "OpenAIEmbeddings + Supabase", desc: "Embed the query, run vector + full-text search in parallel." },
+  { id: "fuse", icon: Zap, tech: "pure fn · RRF", desc: "Reciprocal Rank Fusion, then cap results per video for diversity." },
+  { id: "rerank", icon: ListOrdered, tech: "ChatOpenAI", desc: "An LLM reorders the candidate pool by true intent." },
+  { id: "enrich", icon: Database, tech: "Supabase + pure fn", desc: "Refine timestamps and attach technique metadata." },
+  { id: "generate", icon: MessageSquare, tech: "ChatOpenAI", desc: "Write a cited answer grounded only in the retrieved sources." },
+];
+
+const LG_CONCEPTS: Array<{ icon: typeof Search; term: string; def: string }> = [
+  { icon: Database, term: "State", def: "A typed object (Annotation.Root) with one channel per field. Reducers decide how updates merge — the trace channel appends, the rest overwrite." },
+  { icon: Cpu, term: "Nodes", def: "Async functions shaped (state) → partial state. Each does one job and returns only the fields it changed." },
+  { icon: GitBranch, term: "Edges", def: "Static edges fix the order. One conditional edge after fuse routes to END when nothing was retrieved, otherwise on to rerank." },
+];
+
 export function SearchClient() {
   const [tab, setTab] = useState<Tab>("search");
   const [query, setQuery] = useState("knee cut");
@@ -113,6 +196,8 @@ export function SearchClient() {
   const [loading, setLoading] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [askLoading, setAskLoading] = useState(false);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [comparison, setComparison] = useState<Comparison>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<RagAnalysis | null>(null);
@@ -128,6 +213,7 @@ export function SearchClient() {
     setActionError(null);
     setAnalysis(null);
     setAnswer(null);
+    setComparison(null);
     try {
       const res = await fetch(`/api/rag/search?q=${encodeURIComponent(trimmed)}&limit=12`);
       const payload = (await res.json()) as RagSearchResponse & { error?: string };
@@ -152,6 +238,7 @@ export function SearchClient() {
     setActionError(null);
     setAnalysis(null);
     setAnswer(null);
+    setComparison(null);
     try {
       const res = await fetch(`/api/rag/vector-search?q=${encodeURIComponent(trimmed)}&limit=12`);
       const payload = (await res.json()) as RagSearchResponse & { error?: string };
@@ -211,6 +298,59 @@ export function SearchClient() {
       setAnswer(null);
     } finally {
       setAskLoading(false);
+    }
+  }
+
+  // Runs the classic OpenAI-SDK pipeline and the LangGraph pipeline on the same
+  // query in parallel, then renders both answers side-by-side for comparison.
+  async function compareEngines() {
+    const trimmed = searchedQuery || query.trim();
+    if (trimmed.length < 2) return;
+    setCompareLoading(true);
+    setActionError(null);
+    setAnswer(null);
+    setAnalysis(null);
+    setComparison(null);
+    try {
+      const [classic, graph] = await Promise.all([
+        postTimed<RagAskResponse>("/api/rag/ask", { query: trimmed, retrieval: "auto" }),
+        postTimed<RagGraphAskResponse>("/api/rag/graph-ask", { query: trimmed, retrieval: "auto" }),
+      ]);
+      if (!classic.ok) throw new Error(classic.payload.error ?? "Classic engine failed");
+      if (!graph.ok) throw new Error(graph.payload.error ?? "LangGraph engine failed");
+
+      setComparison({
+        classic: {
+          engine: "classic",
+          label: "Classic",
+          sublabel: "OpenAI SDK · hand-rolled",
+          answer: classic.payload.answer,
+          model: classic.payload.model,
+          retrieval: classic.payload.retrieval,
+          reranked: Boolean(classic.payload.reranked),
+          sourceCount: classic.payload.source_count,
+          clientMs: classic.ms,
+        },
+        graph: {
+          engine: "langgraph",
+          label: "LangGraph",
+          sublabel: "StateGraph · LangChain",
+          answer: graph.payload.answer,
+          model: graph.payload.model,
+          retrieval: graph.payload.retrieval,
+          reranked: graph.payload.reranked,
+          sourceCount: graph.payload.source_count,
+          clientMs: graph.ms,
+          serverMs: graph.payload.total_ms,
+          trace: graph.payload.trace,
+        },
+      });
+      setSearchedQuery(trimmed);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Comparison failed");
+      setComparison(null);
+    } finally {
+      setCompareLoading(false);
     }
   }
 
@@ -293,6 +433,30 @@ export function SearchClient() {
                 label="Ask AI"
                 tooltip="Use hybrid retrieval to generate an answer grounded in transcript sources, with citations."
               />
+              <ActionButton
+                onClick={compareEngines}
+                loading={compareLoading}
+                icon={GitCompareArrows}
+                label="Compare Engines"
+                tooltip="Run the same question through the classic OpenAI-SDK pipeline and a LangGraph/LangChain pipeline, side-by-side, with timing and the LangGraph node trace."
+              />
+            </div>
+
+            {/* LangGraph reference */}
+            <div className="flex items-start gap-2.5 rounded-xl border border-border bg-secondary/50 px-3.5 py-2.5">
+              <Workflow size={14} className="text-accent shrink-0 mt-0.5" />
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                <span className="font-bold text-foreground">Compare Engines</span> answers your query two ways — the classic
+                OpenAI-SDK pipeline and a{" "}
+                <span className="font-bold text-foreground">LangGraph</span> StateGraph — side-by-side with per-node timing.{" "}
+                <button
+                  type="button"
+                  onClick={() => setTab("map")}
+                  className="font-bold text-accent hover:underline"
+                >
+                  See how it works in the System Map →
+                </button>
+              </p>
             </div>
 
             {/* Summary row */}
@@ -308,6 +472,9 @@ export function SearchClient() {
 
             {error && <Banner tone="error">{error}</Banner>}
             {actionError && <Banner tone="error">{actionError}</Banner>}
+
+            {/* Engine Comparison */}
+            {comparison && <EngineComparison comparison={comparison} />}
 
             {/* AI Answer */}
             {answer && (
@@ -615,6 +782,316 @@ function ActionButton({
   );
 }
 
+function EngineComparison({ comparison }: { comparison: NonNullable<Comparison> }) {
+  const { classic, graph } = comparison;
+  const faster = classic.clientMs <= graph.clientMs ? "classic" : "langgraph";
+  const delta = Math.abs(classic.clientMs - graph.clientMs);
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-5 space-y-4 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-accent/12 flex items-center justify-center">
+            <GitCompareArrows size={14} className="text-accent" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold leading-tight">Engine Comparison</h2>
+            <p className="text-[11px] text-muted-foreground">Same query, same corpus — classic pipeline vs LangGraph</p>
+          </div>
+        </div>
+        <span className="text-[11px] font-bold text-muted-foreground bg-secondary rounded-full px-2.5 py-1 shrink-0">
+          {faster === "classic" ? "Classic" : "LangGraph"} faster by {delta}ms
+        </span>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-3">
+        <EngineColumn result={classic} highlight={faster === "classic"} />
+        <EngineColumn result={graph} highlight={faster === "langgraph"} />
+      </div>
+
+      <p className="text-[11px] text-muted-foreground border-t border-border pt-3">
+        Both engines share the same Supabase retrieval RPCs, RRF fusion, diversity cap, LLM rerank, and answer contract.
+        Only the orchestration differs: the classic engine is hand-wired on the OpenAI SDK; the LangGraph engine runs the
+        same stages as a compiled <code className="bg-secondary rounded px-1">StateGraph</code> using LangChain runnables.
+      </p>
+    </div>
+  );
+}
+
+function EngineColumn({ result, highlight }: { result: EngineResult; highlight: boolean }) {
+  const answer = result.answer;
+  const isGraph = result.engine === "langgraph";
+  return (
+    <div
+      className={
+        highlight
+          ? "rounded-xl border-2 border-accent/40 bg-secondary/50 p-4 space-y-3"
+          : "rounded-xl border border-border bg-secondary/50 p-4 space-y-3"
+      }
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-md bg-card border border-border flex items-center justify-center">
+            {isGraph ? <Workflow size={12} className="text-foreground" /> : <Cpu size={12} className="text-foreground" />}
+          </div>
+          <div>
+            <h3 className="text-sm font-bold leading-tight">{result.label}</h3>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{result.sublabel}</p>
+          </div>
+        </div>
+        <span className="flex items-center gap-1 text-[11px] font-black text-foreground bg-card border border-border rounded-full px-2 py-1 shrink-0 tabular-nums">
+          <Timer size={10} />
+          {result.clientMs}ms
+        </span>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        <Chip>{result.model}</Chip>
+        <Chip>{result.retrieval}</Chip>
+        <Chip>{result.sourceCount} sources</Chip>
+        <Chip>{result.reranked ? "reranked" : "no rerank"}</Chip>
+      </div>
+
+      <p className="text-sm leading-relaxed text-foreground/85 whitespace-pre-line">{answer.answer}</p>
+
+      {answer.key_takeaways.length > 0 && (
+        <ul className="space-y-1">
+          {answer.key_takeaways.map((t, i) => (
+            <li key={i} className="flex items-start gap-2 text-xs text-foreground/75">
+              <span className="text-accent mt-0.5">·</span>
+              {t}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {answer.citations.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {answer.citations.map((c, i) => (
+            <a
+              key={i}
+              href={c.watch_url ?? "#"}
+              target={c.watch_url ? "_blank" : undefined}
+              rel="noreferrer"
+              className="flex items-center gap-1.5 text-[11px] font-bold text-foreground bg-card border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors no-underline"
+            >
+              <Link2 size={10} />
+              {c.title}
+              {c.start_seconds ? ` — ${secondsLabel(c.start_seconds)}` : ""}
+            </a>
+          ))}
+        </div>
+      )}
+
+      {isGraph && result.trace && result.trace.length > 0 && (
+        <div className="pt-1 border-t border-border">
+          <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2 flex items-center gap-1.5">
+            <Workflow size={11} />
+            Graph node trace
+          </p>
+          <ol className="space-y-1">
+            {result.trace.map((node, i) => (
+              <li key={node.node} className="flex items-center gap-2 text-[11px]">
+                <span className="w-4 h-4 shrink-0 rounded bg-card border border-border text-[9px] font-black flex items-center justify-center tabular-nums">
+                  {i + 1}
+                </span>
+                <span className="font-bold text-foreground">{node.label}</span>
+                <span className="text-muted-foreground truncate flex-1">{node.detail}</span>
+                <span className="text-foreground font-bold tabular-nums shrink-0">{node.ms}ms</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {answer.caveats.length > 0 && (
+        <p className="text-[11px] text-muted-foreground pt-1 border-t border-border">{answer.caveats.join(" · ")}</p>
+      )}
+    </div>
+  );
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-[10px] font-bold text-muted-foreground bg-card border border-border rounded-full px-2 py-0.5">
+      {children}
+    </span>
+  );
+}
+
+/* ---- System Map: how the two engines are wired ---- */
+function EngineArchitecture() {
+  return (
+    <>
+      {/* Two engines, one pipeline */}
+      <section className="p-5 rounded-2xl border border-border bg-card shadow-sm space-y-4">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-accent/12 flex items-center justify-center">
+            <GitCompareArrows size={14} className="text-accent" />
+          </div>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-muted-foreground">Two Orchestration Engines</p>
+            <h2 className="text-lg font-bold leading-tight">Same pipeline, wired two ways</h2>
+          </div>
+        </div>
+        <p className="text-sm text-foreground/65 leading-relaxed">
+          Both engines run the <span className="font-bold text-foreground">identical retrieval math</span> — embed, hybrid search,
+          RRF fusion, diversity cap, LLM rerank, cited generation. What differs is <span className="font-bold text-foreground">how the
+          stages are wired together</span>. The <span className="font-bold text-foreground">Compare Engines</span> button on the Search
+          tab runs both on one query so you can diff them.
+        </p>
+        <div className="grid md:grid-cols-2 gap-3">
+          {ENGINES.map((e) => {
+            const Icon = e.icon;
+            const accent = e.key === "langgraph";
+            return (
+              <div
+                key={e.key}
+                className={
+                  accent
+                    ? "rounded-xl border-2 border-accent/40 bg-secondary/50 p-4 space-y-3"
+                    : "rounded-xl border border-border bg-secondary/50 p-4 space-y-3"
+                }
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-card border border-border flex items-center justify-center">
+                    <Icon size={15} className="text-foreground" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold leading-tight">{e.name}</h3>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{e.sub}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-foreground/70 leading-relaxed">{e.how}</p>
+                <ul className="space-y-1.5">
+                  {e.points.map((p, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                      <span className={accent ? "text-accent mt-0.5" : "text-muted-foreground mt-0.5"}>·</span>
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* LangGraph StateGraph */}
+      <section className="p-5 rounded-2xl border border-border bg-card shadow-sm space-y-4">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-secondary flex items-center justify-center">
+            <Workflow size={14} className="text-foreground" />
+          </div>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-muted-foreground">LangGraph StateGraph</p>
+            <h2 className="text-lg font-bold leading-tight">How the graph executes</h2>
+          </div>
+        </div>
+        <p className="text-sm text-foreground/65 leading-relaxed">
+          The graph is <span className="font-bold text-foreground">compiled once</span>, then <code className="text-foreground bg-secondary rounded px-1 text-xs">invoke()</code> walks
+          it node by node. Each node reads the shared state and returns only the fields it changed; the framework merges those updates
+          and moves to the next edge.
+        </p>
+
+        <NodeFlow />
+
+        <div className="grid sm:grid-cols-3 gap-3 pt-1">
+          {LG_CONCEPTS.map((c) => {
+            const Icon = c.icon;
+            return (
+              <div key={c.term} className="p-3 rounded-xl bg-secondary border border-border">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Icon size={13} className="text-accent" />
+                  <strong className="text-xs font-black text-foreground">{c.term}</strong>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">{c.def}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </>
+  );
+}
+
+// Vertical node-flow diagram of the compiled LangGraph: START → retrieve → fuse
+// →(conditional)→ rerank → enrich → generate → END.
+function NodeFlow() {
+  return (
+    <div className="rounded-xl border border-border bg-secondary/40 p-4 sm:p-5">
+      <div className="flex flex-col items-stretch">
+        <FlowCap label="START" tone="start" />
+        <Connector />
+        {GRAPH_NODES.map((n, i) => {
+          const Icon = n.icon;
+          return (
+            <div key={n.id}>
+              <div className="flex gap-3 items-start rounded-xl border border-border bg-card p-3 shadow-sm">
+                <div className="w-8 h-8 shrink-0 rounded-lg bg-secondary border border-border flex items-center justify-center text-foreground">
+                  <Icon size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <code className="text-[13px] font-black text-foreground">{n.id}()</code>
+                    <span className="text-[10px] font-bold text-accent bg-accent/10 rounded-full px-2 py-0.5">{n.tech}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed mt-1">{n.desc}</p>
+                </div>
+              </div>
+              {n.id === "fuse" ? <ConditionalConnector /> : i < GRAPH_NODES.length - 1 ? <Connector /> : null}
+            </div>
+          );
+        })}
+        <Connector />
+        <FlowCap label="END" tone="end" />
+      </div>
+    </div>
+  );
+}
+
+function Connector() {
+  return (
+    <div className="flex justify-center py-1" aria-hidden>
+      <div className="flex flex-col items-center">
+        <div className="w-px h-3 bg-border" />
+        <ChevronDown size={13} className="text-muted-foreground -mt-1" />
+      </div>
+    </div>
+  );
+}
+
+// The one conditional edge in the graph: skip straight to END on empty retrieval.
+function ConditionalConnector() {
+  return (
+    <div className="flex justify-center py-1.5">
+      <div className="flex items-center gap-2 rounded-full border border-dashed border-accent/50 bg-accent/5 px-3 py-1 flex-wrap justify-center">
+        <GitBranch size={11} className="text-accent shrink-0" />
+        <span className="text-[10px] font-black uppercase tracking-wider text-foreground">conditional edge</span>
+        <span className="text-[10px] text-muted-foreground">
+          sources &gt; 0 → <code className="text-foreground font-bold">rerank</code> · else → <code className="text-foreground font-bold">END</code> (404)
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function FlowCap({ label, tone }: { label: string; tone: "start" | "end" }) {
+  return (
+    <div className="flex justify-center">
+      <span
+        className={
+          tone === "start"
+            ? "text-[10px] font-black uppercase tracking-widest text-accent bg-accent/10 border border-accent/30 rounded-full px-3 py-1"
+            : "text-[10px] font-black uppercase tracking-widest text-muted-foreground bg-secondary border border-border rounded-full px-3 py-1"
+        }
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
 function Banner({ tone, children }: { tone: "error"; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm px-4 py-3">{children}</div>
@@ -673,6 +1150,9 @@ function SystemMap({ onExample }: { onExample: (q: string) => void }) {
           })}
         </div>
       </section>
+
+      {/* Engine architecture */}
+      <EngineArchitecture />
 
       {/* How it works + Use cases */}
       <div className="grid md:grid-cols-2 gap-4">

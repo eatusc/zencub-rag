@@ -30,6 +30,9 @@
     "embed:chunks": "node --experimental-strip-types scripts/embed-rag-chunks.ts"
   },
   "dependencies": {
+    "@langchain/core": "^1.2.2",
+    "@langchain/langgraph": "^1.4.7",
+    "@langchain/openai": "^1.5.5",
     "@supabase/supabase-js": "^2.103.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",

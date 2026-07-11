@@ -10,43 +10,13 @@ import {
   rerankWithLLM,
   rrfFuse,
 } from "@/lib/ragRetrieval";
-import { asNumber, formatRagSource, type RagSource } from "@/lib/ragUtils";
+import { coerceAnswer, formatRagSource, type RagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
 import { refineResultTimestamps } from "@/lib/timestampRefinement";
-import type { RagAnswer, RagSearchResult } from "@/lib/types";
+import type { RagSearchResult } from "@/lib/types";
 
 const RESULT_LIMIT = 8;
 type RetrievalMode = "vector" | "text" | "hybrid";
-
-function coerceAnswer(value: unknown): RagAnswer {
-  const fallback: RagAnswer = {
-    answer: "No answer returned.",
-    citations: [],
-    key_takeaways: [],
-    follow_up_searches: [],
-    caveats: ["The model did not return the expected JSON shape."],
-  };
-
-  if (!value || typeof value !== "object") return fallback;
-  const raw = value as Record<string, unknown>;
-
-  return {
-    answer: typeof raw.answer === "string" ? raw.answer : fallback.answer,
-    citations: Array.isArray(raw.citations) ? raw.citations.slice(0, 8).map((citation) => {
-      const item = citation && typeof citation === "object" ? citation as Record<string, unknown> : {};
-      return {
-        title: typeof item.title === "string" ? item.title : "Untitled source",
-        citation: typeof item.citation === "string" ? item.citation : "No citation",
-        start_seconds: asNumber(item.start_seconds as number | string | null | undefined),
-        end_seconds: asNumber(item.end_seconds as number | string | null | undefined),
-        watch_url: typeof item.watch_url === "string" ? item.watch_url : null,
-      };
-    }) : [],
-    key_takeaways: Array.isArray(raw.key_takeaways) ? raw.key_takeaways.filter((item): item is string => typeof item === "string").slice(0, 8) : [],
-    follow_up_searches: Array.isArray(raw.follow_up_searches) ? raw.follow_up_searches.filter((item): item is string => typeof item === "string").slice(0, 6) : [],
-    caveats: Array.isArray(raw.caveats) ? raw.caveats.filter((item): item is string => typeof item === "string").slice(0, 4) : [],
-  };
-}
 
 async function vectorResults(query: string, limit: number, openai: OpenAI, env: ReturnType<typeof getServerEnv>) {
   const embedding = await openai.embeddings.create({

@@ -1,5 +1,5 @@
 import type { Technique } from "@/lib/ragRetrieval";
-import type { RagSearchResult } from "@/lib/types";
+import type { RagAnswer, RagSearchResult } from "@/lib/types";
 
 export type RagSource = {
   id: number;
@@ -70,5 +70,38 @@ export function formatRagSource(row: RagSearchResult, index: number, technique?:
     position: technique?.canonical_position ?? technique?.position ?? null,
     difficulty: technique?.difficulty ?? null,
     gi_nogi: technique?.gi_nogi ?? null,
+  };
+}
+
+// Normalizes whatever the answer model returns into a well-formed RagAnswer.
+// Shared by the classic /ask route and the LangGraph /graph-ask route so both
+// engines are held to the exact same answer contract for a fair comparison.
+export function coerceAnswer(value: unknown): RagAnswer {
+  const fallback: RagAnswer = {
+    answer: "No answer returned.",
+    citations: [],
+    key_takeaways: [],
+    follow_up_searches: [],
+    caveats: ["The model did not return the expected JSON shape."],
+  };
+
+  if (!value || typeof value !== "object") return fallback;
+  const raw = value as Record<string, unknown>;
+
+  return {
+    answer: typeof raw.answer === "string" ? raw.answer : fallback.answer,
+    citations: Array.isArray(raw.citations) ? raw.citations.slice(0, 8).map((citation) => {
+      const item = citation && typeof citation === "object" ? citation as Record<string, unknown> : {};
+      return {
+        title: typeof item.title === "string" ? item.title : "Untitled source",
+        citation: typeof item.citation === "string" ? item.citation : "No citation",
+        start_seconds: asNumber(item.start_seconds as number | string | null | undefined),
+        end_seconds: asNumber(item.end_seconds as number | string | null | undefined),
+        watch_url: typeof item.watch_url === "string" ? item.watch_url : null,
+      };
+    }) : [],
+    key_takeaways: Array.isArray(raw.key_takeaways) ? raw.key_takeaways.filter((item): item is string => typeof item === "string").slice(0, 8) : [],
+    follow_up_searches: Array.isArray(raw.follow_up_searches) ? raw.follow_up_searches.filter((item): item is string => typeof item === "string").slice(0, 6) : [],
+    caveats: Array.isArray(raw.caveats) ? raw.caveats.filter((item): item is string => typeof item === "string").slice(0, 4) : [],
   };
 }
