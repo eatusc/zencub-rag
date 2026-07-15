@@ -82,6 +82,7 @@ export function coerceAnswer(value: unknown): RagAnswer {
     citations: [],
     key_takeaways: [],
     follow_up_searches: [],
+    suggested_follow_up: null,
     caveats: ["The model did not return the expected JSON shape."],
   };
 
@@ -102,6 +103,9 @@ export function coerceAnswer(value: unknown): RagAnswer {
     }) : [],
     key_takeaways: Array.isArray(raw.key_takeaways) ? raw.key_takeaways.filter((item): item is string => typeof item === "string").slice(0, 8) : [],
     follow_up_searches: Array.isArray(raw.follow_up_searches) ? raw.follow_up_searches.filter((item): item is string => typeof item === "string").slice(0, 6) : [],
+    suggested_follow_up: typeof raw.suggested_follow_up === "string" && raw.suggested_follow_up.trim()
+      ? raw.suggested_follow_up.trim().slice(0, 240)
+      : null,
     caveats: Array.isArray(raw.caveats) ? raw.caveats.filter((item): item is string => typeof item === "string").slice(0, 4) : [],
   };
 }

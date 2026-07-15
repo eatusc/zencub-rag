@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { getServerEnv } from "@/lib/env";
 import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { asNumber, formatRagSource } from "@/lib/ragUtils";
+import { logSearch } from "@/lib/searchLogging";
 import { createServerSupabase } from "@/lib/supabase";
 import { refineResultTimestamps } from "@/lib/timestampRefinement";
 import type { RagAnalysis, RagSearchResult } from "@/lib/types";
@@ -51,6 +52,8 @@ export async function POST(request: NextRequest) {
   if (query.length < 2) {
     return NextResponse.json({ error: "Query must be at least 2 characters." }, { status: 400 });
   }
+
+  await logSearch({ query, action: "analyze", provider: "openai", retrieval: "text" });
 
   try {
     const env = getServerEnv();

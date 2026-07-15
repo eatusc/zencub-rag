@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
+import { logSearch } from "@/lib/searchLogging";
 import { createServerSupabase } from "@/lib/supabase";
 import { refineResultTimestamps } from "@/lib/timestampRefinement";
 import type { RagSearchResult } from "@/lib/types";
@@ -12,6 +13,8 @@ export async function GET(request: NextRequest) {
   if (query.length < 2) {
     return NextResponse.json({ query, results: [] });
   }
+
+  await logSearch({ query, action: "keyword", retrieval: "text" });
 
   try {
     const supabase = createServerSupabase();

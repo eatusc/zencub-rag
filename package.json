@@ -27,6 +27,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "eval:queries": "node --experimental-strip-types scripts/evaluate-rag-examples.ts",
+    "eval:openrouter": "node --experimental-strip-types scripts/evaluate-openrouter-rag.ts",
     "embed:chunks": "node --experimental-strip-types scripts/embed-rag-chunks.ts"
   },
   "dependencies": {

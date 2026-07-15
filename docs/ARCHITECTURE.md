@@ -70,7 +70,7 @@ Ask button
                   -> cited answer JSON
 ```
 
-`/api/rag/ask` is the first open-ended RAG endpoint. It retrieves sources server-side, sends only those sources to the answer model, and returns answer text, citations, takeaways, follow-up searches, and caveats. Auto mode fuses vector and text with RRF and reports `hybrid`, or `text`/`vector` when only one retriever returns candidates. Retrieval helpers live in `src/lib/ragRetrieval.ts`. The answer model is configured by `RAG_ANSWER_MODEL`; the reranker by `RAG_RERANK_MODEL` (`RAG_RERANK=off` disables it). Both default to `gpt-4o-mini`.
+`/api/rag/ask` is the first open-ended RAG endpoint. It retrieves sources server-side, sends only those sources to the selected answer engine, and returns answer text, citations, takeaways, follow-up searches, and caveats. The selectable engines are local Qwen, OpenRouter Qwen3 235B A22B, Claude CLI, and OpenAI. Auto mode fuses vector and text with RRF and reports `hybrid`, or `text`/`vector` when only one retriever returns candidates. Retrieval helpers live in `src/lib/ragRetrieval.ts`. The OpenAI answer model is configured by `RAG_ANSWER_MODEL`, the OpenRouter model by `RAG_OPENROUTER_MODEL`, and the reranker by `RAG_RERANK_MODEL` (`RAG_RERANK=off` disables it).
 
 The database-native versions of hybrid fusion, the HNSW/GIN indexes, and optional degenerate-chunk cleanup are in `docs/migrations/2026-07-07-hybrid-rrf-index-cleanup.sql` for running in the Supabase SQL editor.
 

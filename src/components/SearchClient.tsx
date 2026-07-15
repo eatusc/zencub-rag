@@ -20,13 +20,14 @@ import {
   Loader2,
   MessageSquare,
   Search,
+  Send,
   Sparkles,
   Timer,
   Users,
   Workflow,
   Zap,
 } from "lucide-react";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useState } from "react";
 import type {
   RagAnalysis,
   RagAnalyzeResponse,
@@ -36,7 +37,13 @@ import type {
   RagGraphTraceEntry,
   RagSearchResponse,
   RagSearchResult,
+  RagTokenUsage,
 } from "@/lib/types";
+import {
+  PROVIDER_META,
+  type AnswerProvider,
+  type ProviderInfo,
+} from "@/lib/providers";
 import { timestampUrl } from "@/lib/ragUtils";
 
 function secondsLabel(value: number | string | null | undefined) {
@@ -57,6 +64,7 @@ function scoreFor(result: RagSearchResult) {
 
 type Tab = "search" | "map";
 type Mode = "keyword" | "semantic";
+type FollowUpTurn = { question: string; response: RagAskResponse };
 
 // One engine's result inside the side-by-side comparison. `trace`/`serverMs` are
 // only populated for the LangGraph engine, which reports its executed nodes.
@@ -131,12 +139,25 @@ const EVAL_STRIP = [
   { value: "RRF", label: "hybrid fusion" },
 ];
 
-const TABLE_ROWS: Array<{ table: string; count: string; type: "Core" | "Meta" | "Vectors"; desc: string }> = [
+const TABLE_ROWS: Array<{ table: string; count: string; type: "Core" | "Meta" | "Vectors" | "Logs"; desc: string }> = [
   { table: "rag_videos", count: "2,402", type: "Core", desc: "Video title, source URL, platform, channel, thumbnail, slug." },
   { table: "rag_video_transcripts", count: "2,298", type: "Core", desc: "Raw transcript JSON segments and transcript metadata." },
   { table: "rag_techniques", count: "2,844", type: "Meta", desc: "Technique names, positions, summaries, steps, timestamps." },
   { table: "rag_creators", count: "468", type: "Meta", desc: "Canonical creator names, aliases, opt-out field." },
   { table: "rag_transcript_chunks", count: "12,104", type: "Vectors", desc: "Searchable timestamped chunks + embedding vectors." },
+  { table: "rag_search_logs", count: "Live", type: "Logs", desc: "Every keyword, semantic, analysis, Ask AI, and follow-up query." },
+];
+
+const MODEL_USAGE_ROWS = [
+  { action: "Regular Search", usesLlm: "No", local: "No", openrouter: "No", openai: "No" },
+  { action: "Semantic Search", usesLlm: "No · embedding only", local: "No", openrouter: "No", openai: "Query embedding" },
+  { action: "Analyze Results", usesLlm: "Yes", local: "No", openrouter: "No", openai: "Analysis generation" },
+  { action: "Ask AI · local Qwen selected", usesLlm: "Yes", local: "Final answer", openrouter: "No", openai: "Embedding + usually reranking" },
+  { action: "Ask AI · Qwen3 235B selected", usesLlm: "Yes", local: "No", openrouter: "Final answer", openai: "Embedding + usually reranking" },
+  { action: "Ask AI · Claude selected", usesLlm: "Yes", local: "Final answer", openrouter: "No", openai: "Embedding + usually reranking" },
+  { action: "Ask AI · OpenAI selected", usesLlm: "Yes", local: "No", openrouter: "No", openai: "Embedding + reranking + final answer" },
+  { action: "Ask follow-up", usesLlm: "Yes", local: "Final answer when selected", openrouter: "Final answer when selected", openai: "Context retrieval + reranking; final answer when selected" },
+  { action: "Page load", usesLlm: "No", local: "Availability probes only", openrouter: "Key check only", openai: "No model call" },
 ];
 
 /* ---- Engine architecture (Classic vs LangGraph) ---- */
@@ -204,7 +225,34 @@ export function SearchClient() {
   const [analysisModel, setAnalysisModel] = useState("");
   const [answer, setAnswer] = useState<RagAnswer | null>(null);
   const [answerModel, setAnswerModel] = useState("");
+  const [answerUsage, setAnswerUsage] = useState<RagTokenUsage | null>(null);
+  const [answerProvider, setAnswerProvider] = useState<AnswerProvider | "">("");
   const [answerRetrieval, setAnswerRetrieval] = useState<"vector" | "text" | "hybrid" | "">("");
+  const [answerQuery, setAnswerQuery] = useState("");
+  const [answerContextIds, setAnswerContextIds] = useState<string[]>([]);
+  const [followUps, setFollowUps] = useState<FollowUpTurn[]>([]);
+  const [followUpQuestion, setFollowUpQuestion] = useState("");
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [provider, setProvider] = useState<AnswerProvider | "">("");
+
+  // Discover which answer engines exist on the host so we only offer available
+  // ones and preselect the server's default (local Qwen on the Mac Studio).
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/rag/providers")
+      .then((res) => res.json())
+      .then((data: { providers?: ProviderInfo[]; default?: AnswerProvider }) => {
+        if (cancelled) return;
+        setProviders(data.providers ?? []);
+        setProvider(data.default ?? "");
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function runSearch(trimmed: string) {
     setLoading(true);
@@ -214,6 +262,8 @@ export function SearchClient() {
     setAnalysis(null);
     setAnswer(null);
     setComparison(null);
+    setFollowUps([]);
+    setFollowUpError(null);
     try {
       const res = await fetch(`/api/rag/search?q=${encodeURIComponent(trimmed)}&limit=12`);
       const payload = (await res.json()) as RagSearchResponse & { error?: string };
@@ -239,6 +289,8 @@ export function SearchClient() {
     setAnalysis(null);
     setAnswer(null);
     setComparison(null);
+    setFollowUps([]);
+    setFollowUpError(null);
     try {
       const res = await fetch(`/api/rag/vector-search?q=${encodeURIComponent(trimmed)}&limit=12`);
       const payload = (await res.json()) as RagSearchResponse & { error?: string };
@@ -286,13 +338,21 @@ export function SearchClient() {
       const res = await fetch("/api/rag/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: trimmed, retrieval: "auto" }),
+        body: JSON.stringify({ query: trimmed, retrieval: "auto", provider: provider || undefined }),
       });
       const payload = (await res.json()) as RagAskResponse & { error?: string };
       if (!res.ok) throw new Error(payload.error ?? "Ask failed");
       setAnswer(payload.answer);
       setAnswerModel(payload.model);
+      setAnswerUsage(payload.usage);
+      setAnswerProvider(payload.provider);
       setAnswerRetrieval(payload.retrieval);
+      setAnswerQuery(payload.query);
+      setAnswerContextIds(payload.context_ids);
+      setFollowUps([]);
+      setFollowUpQuestion("");
+      setFollowUpError(null);
+      setProvider(payload.provider);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Ask failed");
       setAnswer(null);
@@ -313,7 +373,7 @@ export function SearchClient() {
     setComparison(null);
     try {
       const [classic, graph] = await Promise.all([
-        postTimed<RagAskResponse>("/api/rag/ask", { query: trimmed, retrieval: "auto" }),
+        postTimed<RagAskResponse>("/api/rag/ask", { query: trimmed, retrieval: "auto", provider: "openai" }),
         postTimed<RagGraphAskResponse>("/api/rag/graph-ask", { query: trimmed, retrieval: "auto" }),
       ]);
       if (!classic.ok) throw new Error(classic.payload.error ?? "Classic engine failed");
@@ -353,6 +413,46 @@ export function SearchClient() {
       setCompareLoading(false);
     }
   }
+
+  async function askFollowUp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = followUpQuestion.trim();
+    if (trimmed.length < 2 || !answer || !answerProvider) return;
+
+    const latestResponse = followUps.at(-1)?.response;
+    const conversation = [
+      { question: answerQuery, answer: answer.answer },
+      ...followUps.map((turn) => ({ question: turn.question, answer: turn.response.answer.answer })),
+    ];
+
+    setFollowUpLoading(true);
+    setFollowUpError(null);
+    try {
+      const res = await fetch("/api/rag/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: trimmed,
+          retrieval: "auto",
+          provider: latestResponse?.provider ?? answerProvider,
+          conversation,
+          context_ids: latestResponse?.context_ids ?? answerContextIds,
+        }),
+      });
+      const payload = (await res.json()) as RagAskResponse & { error?: string };
+      if (!res.ok) throw new Error(payload.error ?? "Follow-up failed");
+      setFollowUps((current) => [...current, { question: trimmed, response: payload }]);
+      setFollowUpQuestion("");
+    } catch (err) {
+      setFollowUpError(err instanceof Error ? err.message : "Follow-up failed");
+    } finally {
+      setFollowUpLoading(false);
+    }
+  }
+
+  const latestConversationAnswer = followUps.at(-1)?.response.answer ?? answer;
+  const followUpPlaceholder = latestConversationAnswer?.suggested_follow_up
+    ?? "Ask a follow-up about this answer…";
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -459,6 +559,11 @@ export function SearchClient() {
               </p>
             </div>
 
+            {/* Answer engine selector — only the providers this host can reach */}
+            {providers.length > 0 && (
+              <ProviderSelector providers={providers} selected={provider} onSelect={setProvider} />
+            )}
+
             {/* Summary row */}
             {searchedQuery && (
               <div className="flex justify-between items-center text-xs text-muted-foreground px-1">
@@ -486,10 +591,18 @@ export function SearchClient() {
                     </div>
                     <h2 className="text-base font-bold">AI Answer</h2>
                   </div>
-                  <span className="text-[11px] font-bold text-muted-foreground bg-secondary rounded-full px-2.5 py-1 shrink-0">
-                    {answerModel}
-                    {answerRetrieval ? ` · ${answerRetrieval}` : ""}
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {answerProvider && (
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-accent bg-accent/12 rounded-full px-2.5 py-1">
+                        <Cpu size={11} />
+                        {PROVIDER_META[answerProvider].label}
+                      </span>
+                    )}
+                    <span className="text-[11px] font-bold text-muted-foreground bg-secondary rounded-full px-2.5 py-1">
+                      {answerModel}
+                      {answerRetrieval ? ` · ${answerRetrieval}` : ""}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-[15px] leading-relaxed text-foreground/85 whitespace-pre-line">{answer.answer}</p>
 
@@ -542,6 +655,113 @@ export function SearchClient() {
                     {answer.caveats.join(" · ")}
                   </p>
                 )}
+
+                {answerProvider && (
+                  <AnswerUsage provider={answerProvider} model={answerModel} usage={answerUsage} />
+                )}
+
+                <div className="pt-4 mt-4 border-t border-border space-y-4">
+                  <div>
+                    <h3 className="text-sm font-bold">Ask a follow-up</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Your next question will use this answer, the conversation, and its transcript context.
+                    </p>
+                  </div>
+
+                  {followUps.length > 0 && (
+                    <div className="space-y-3" aria-live="polite">
+                      {followUps.map((turn, index) => (
+                        <div key={`${turn.question}-${index}`} className="space-y-2">
+                          <div className="ml-auto max-w-[90%] rounded-xl rounded-br-sm bg-primary px-3.5 py-2.5 text-sm text-primary-foreground">
+                            {turn.question}
+                          </div>
+                          <div className="rounded-xl rounded-tl-sm border border-border bg-secondary p-3.5 space-y-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">AI follow-up</span>
+                              <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground">
+                                <Cpu size={10} />
+                                {PROVIDER_META[turn.response.provider].label} · {turn.response.model}
+                              </span>
+                            </div>
+                            <p className="text-sm leading-relaxed text-foreground/85 whitespace-pre-line">
+                              {turn.response.answer.answer}
+                            </p>
+                            {turn.response.answer.key_takeaways.length > 0 && (
+                              <ul className="space-y-1">
+                                {turn.response.answer.key_takeaways.map((takeaway, takeawayIndex) => (
+                                  <li key={takeawayIndex} className="flex items-start gap-2 text-xs text-foreground/70">
+                                    <span className="text-accent mt-0.5">·</span>
+                                    {takeaway}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {turn.response.answer.citations.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {turn.response.answer.citations.map((citation, citationIndex) => (
+                                  <a
+                                    key={citationIndex}
+                                    href={citation.watch_url ?? "#"}
+                                    target={citation.watch_url ? "_blank" : undefined}
+                                    rel="noreferrer"
+                                    className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-[11px] font-bold text-foreground no-underline transition-colors hover:border-foreground/30"
+                                  >
+                                    <Link2 size={10} />
+                                    {citation.title}
+                                    {citation.start_seconds ? ` — ${secondsLabel(citation.start_seconds)}` : ""}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                            {turn.response.answer.caveats.length > 0 && (
+                              <p className="border-t border-border pt-2 text-xs text-muted-foreground">
+                                {turn.response.answer.caveats.join(" · ")}
+                              </p>
+                            )}
+                            <AnswerUsage
+                              provider={turn.response.provider}
+                              model={turn.response.model}
+                              usage={turn.response.usage}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <form onSubmit={askFollowUp} className="space-y-2">
+                    <textarea
+                      value={followUpQuestion}
+                      onChange={(event) => setFollowUpQuestion(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                          event.preventDefault();
+                          event.currentTarget.form?.requestSubmit();
+                        }
+                      }}
+                      rows={3}
+                      maxLength={1_000}
+                      disabled={followUpLoading}
+                      aria-label="Ask a follow-up question"
+                      placeholder={followUpPlaceholder}
+                      className="w-full resize-y rounded-xl border border-border bg-secondary px-3.5 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground/30 disabled:opacity-60"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] text-muted-foreground">⌘/Ctrl + Enter to send</span>
+                      <button
+                        type="submit"
+                        disabled={followUpLoading || followUpQuestion.trim().length < 2}
+                        className="inline-flex items-center gap-2 rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                      >
+                        {followUpLoading ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                        {followUpLoading ? "Thinking…" : "Ask follow-up"}
+                      </button>
+                    </div>
+                    {followUpError && (
+                      <p role="alert" className="text-xs font-semibold text-red-600">{followUpError}</p>
+                    )}
+                  </form>
+                </div>
               </div>
             )}
 
@@ -911,6 +1131,32 @@ function EngineColumn({ result, highlight }: { result: EngineResult; highlight: 
   );
 }
 
+function AnswerUsage({
+  provider,
+  model,
+  usage,
+}: {
+  provider: AnswerProvider;
+  model: string;
+  usage: RagTokenUsage | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
+      <span>
+        Answer model: <strong className="font-bold text-foreground/75">{PROVIDER_META[provider].label} · {model}</strong>
+      </span>
+      {usage ? (
+        <span title="Answer-generation tokens only; retrieval embedding and reranking usage are separate.">
+          <strong className="font-bold text-foreground/75">{usage.total_tokens.toLocaleString()}</strong> generation tokens
+          {` · ${usage.prompt_tokens.toLocaleString()} prompt + ${usage.completion_tokens.toLocaleString()} output`}
+        </span>
+      ) : (
+        <span>Token usage not reported</span>
+      )}
+    </div>
+  );
+}
+
 function Chip({ children }: { children: React.ReactNode }) {
   return (
     <span className="text-[10px] font-bold text-muted-foreground bg-card border border-border rounded-full px-2 py-0.5">
@@ -1045,6 +1291,49 @@ function NodeFlow() {
         })}
         <Connector />
         <FlowCap label="END" tone="end" />
+      </div>
+    </div>
+  );
+}
+
+function ProviderSelector({
+  providers,
+  selected,
+  onSelect,
+}: {
+  providers: ProviderInfo[];
+  selected: AnswerProvider | "";
+  onSelect: (provider: AnswerProvider) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+        <Cpu size={12} />
+        Answer engine
+      </span>
+      <div className="flex flex-wrap gap-1 p-1 rounded-xl bg-secondary border border-border">
+        {providers.map((p) => {
+          const active = selected === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => p.available && onSelect(p.id)}
+              disabled={!p.available}
+              title={p.available ? `${PROVIDER_META[p.id].blurb} (${p.model})` : `${PROVIDER_META[p.id].label} not detected on this host`}
+              className={
+                active
+                  ? "flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
+                  : p.available
+                    ? "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                    : "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-muted-foreground/50 cursor-not-allowed"
+              }
+            >
+              {PROVIDER_META[p.id].label}
+              {!p.available && <span className="text-[10px] font-normal">· off</span>}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1252,7 +1541,9 @@ function SystemMap({ onExample }: { onExample: (q: string) => void }) {
                     ? "text-[11px] font-bold rounded-full px-2 py-0.5 text-center bg-card text-foreground border border-border"
                     : row.type === "Vectors"
                       ? "text-[11px] font-bold rounded-full px-2 py-0.5 text-center bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      : "text-[11px] font-bold rounded-full px-2 py-0.5 text-center bg-secondary text-muted-foreground border border-border"
+                      : row.type === "Logs"
+                        ? "text-[11px] font-bold rounded-full px-2 py-0.5 text-center bg-amber-50 text-amber-700 border border-amber-200"
+                        : "text-[11px] font-bold rounded-full px-2 py-0.5 text-center bg-secondary text-muted-foreground border border-border"
                 }
               >
                 {row.type}
@@ -1260,6 +1551,41 @@ function SystemMap({ onExample }: { onExample: (q: string) => void }) {
               <span className="text-xs text-muted-foreground leading-relaxed">{row.desc}</span>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Model provider usage */}
+      <section className="p-5 rounded-2xl border border-border bg-card shadow-sm space-y-4">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-widest text-muted-foreground mb-1">Providers</p>
+          <h2 className="text-lg font-bold">Model Usage by App Action</h2>
+          <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
+            The Ask AI provider controls final-answer generation. With an OpenAI key configured, retrieval can still use OpenAI embeddings and reranking.
+          </p>
+        </div>
+        <div className="overflow-x-auto rounded-xl border border-border">
+          <table className="w-full min-w-[980px] text-left text-sm">
+            <thead className="bg-secondary text-[11px] font-black uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th scope="col" className="px-4 py-3">App action</th>
+                <th scope="col" className="px-4 py-3">Uses LLM?</th>
+                <th scope="col" className="px-4 py-3">Local Qwen / Claude</th>
+                <th scope="col" className="px-4 py-3">OpenRouter</th>
+                <th scope="col" className="px-4 py-3">OpenAI</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {MODEL_USAGE_ROWS.map((row) => (
+                <tr key={row.action} className="bg-card">
+                  <th scope="row" className="px-4 py-3 font-bold text-foreground">{row.action}</th>
+                  <td className="px-4 py-3 font-semibold text-foreground/80">{row.usesLlm}</td>
+                  <td className="px-4 py-3 text-foreground/70">{row.local}</td>
+                  <td className="px-4 py-3 text-foreground/70">{row.openrouter}</td>
+                  <td className="px-4 py-3 text-foreground/70">{row.openai}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
     </div>

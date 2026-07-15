@@ -64,15 +64,30 @@ export type RagAnswer = {
   citations: RagAnswerCitation[];
   key_takeaways: string[];
   follow_up_searches: string[];
+  suggested_follow_up: string | null;
   caveats: string[];
+};
+
+export type RagConversationTurn = {
+  question: string;
+  answer: string;
+};
+
+export type RagTokenUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
 };
 
 export type RagAskResponse = {
   query: string;
+  provider: import("@/lib/providers").AnswerProvider;
   model: string;
   retrieval: "vector" | "text" | "hybrid";
   reranked?: boolean;
   source_count: number;
+  context_ids: string[];
+  usage: RagTokenUsage | null;
   answer: RagAnswer;
 };
 

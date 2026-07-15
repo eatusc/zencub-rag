@@ -12,3 +12,6 @@ pnpm-debug.log*
 
 # Local design reference export (not part of the shipped app)
 design-mockup/
+
+# Local machine run notes (port, setup) — not part of the shipped app
+LOCAL.md

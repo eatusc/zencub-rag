@@ -37,15 +37,19 @@ NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 OPENAI_API_KEY=...
+OPENROUTER_API_KEY=...
 RAG_ANALYZE_MODEL=gpt-4o-mini
 RAG_ANSWER_MODEL=gpt-4o-mini
 RAG_EMBEDDING_MODEL=text-embedding-3-small
 RAG_RERANK_MODEL=gpt-4o-mini
+RAG_OPENROUTER_MODEL=qwen/qwen3-235b-a22b-2507
 RAG_RERANK=on
 RAG_TEST_PROJECT_REF=YOUR_PROJECT_REF
 ```
 
-The browser never receives the service-role key. API routes own all database access.
+The browser never receives the service-role or model-provider keys. API routes own all database and model access.
+
+Run `docs/migrations/2026-07-14-search-logging.sql` once in the Supabase SQL editor to create the server-only search history table. After that, keyword searches, semantic searches, analyses, Ask AI questions, and conversational follow-ups are logged automatically.
 
 ## How The Technology Works
 
@@ -97,6 +101,7 @@ The important separation:
 - `rag_transcript_chunks` holds searchable evidence chunks with timestamps.
 - `embedding` holds vector representations; 12,104 chunks are embedded; the transcript corpus has full vector coverage.
 - API routes own all database access so secrets stay server-side.
+- `rag_search_logs` stores every user-triggered query and action type; browser clients cannot access it directly.
 - `/api/rag/analyze` reruns the current search, sends the top chunks to a small/fast model, and returns a structured watch plan.
 - `/api/rag/vector-search` embeds the query and calls `match_rag_transcript_chunks`.
 - `/api/rag/ask` fuses vector + text retrieval with Reciprocal Rank Fusion, caps sources per video, reranks by intent, enriches with technique metadata, and returns a cited answer. Retrieval helpers live in `src/lib/ragRetrieval.ts`.
@@ -113,6 +118,7 @@ Tables used:
 - `rag_video_attributions`
 - `rag_creators`
 - `rag_transcript_chunks`
+- `rag_search_logs`
 
 Current dataset:
 

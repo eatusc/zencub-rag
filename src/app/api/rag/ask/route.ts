@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { generateAnswer, probeQwen, providerModel } from "@/lib/answerProviders";
 import { getServerEnv } from "@/lib/env";
+import { normalizeProvider, type AnswerProvider } from "@/lib/providers";
 import {
   CANDIDATE_POOL,
   RERANK_POOL,
@@ -10,15 +12,17 @@ import {
   rerankWithLLM,
   rrfFuse,
 } from "@/lib/ragRetrieval";
-import { coerceAnswer, formatRagSource, type RagSource } from "@/lib/ragUtils";
+import { formatRagSource } from "@/lib/ragUtils";
+import { logSearch } from "@/lib/searchLogging";
 import { createServerSupabase } from "@/lib/supabase";
 import { refineResultTimestamps } from "@/lib/timestampRefinement";
-import type { RagSearchResult } from "@/lib/types";
+import type { RagConversationTurn, RagSearchResult } from "@/lib/types";
 
 const RESULT_LIMIT = 8;
 type RetrievalMode = "vector" | "text" | "hybrid";
 
-async function vectorResults(query: string, limit: number, openai: OpenAI, env: ReturnType<typeof getServerEnv>) {
+async function vectorResults(query: string, limit: number, openai: OpenAI | null, env: ReturnType<typeof getServerEnv>) {
+  if (!openai) return [];
   const embedding = await openai.embeddings.create({
     model: env.ragEmbeddingModel,
     input: query,
@@ -49,13 +53,55 @@ async function textResults(query: string, limit: number) {
   return (data ?? []) as RagSearchResult[];
 }
 
+async function contextResults(ids: string[]) {
+  if (ids.length === 0) return [];
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("rag_transcript_chunks")
+    .select("id,video_id,chunk_index,start_seconds,end_seconds,text,metadata")
+    .in("id", ids);
+  if (error) throw new Error(error.message);
+
+  const byId = new Map(((data ?? []) as Omit<RagSearchResult, "rank">[]).map((row) => [row.id, row]));
+  return ids.flatMap((id) => {
+    const row = byId.get(id);
+    return row ? [{ ...row, rank: 0 }] : [];
+  });
+}
+
+function normalizeConversation(value: unknown): RagConversationTurn[] {
+  if (!Array.isArray(value)) return [];
+  const turns = value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const raw = item as Record<string, unknown>;
+    const question = typeof raw.question === "string" ? raw.question.trim().slice(0, 1_000) : "";
+    const answer = typeof raw.answer === "string" ? raw.answer.trim().slice(0, 6_000) : "";
+    return question && answer ? [{ question, answer }] : [];
+  });
+  return turns.length <= 6 ? turns : [turns[0], ...turns.slice(-5)];
+}
+
+function normalizeContextIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 200))].slice(0, 12);
+}
+
+function uniqueRows(rows: RagSearchResult[]) {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+}
+
 // Retrieve candidates, fuse with RRF, then diversify. Replaces the previous
 // similarity-threshold + interleave + citation-retry logic with rank fusion,
 // which needs no score cutoff and merges text and vector on equal footing.
 async function buildCandidates(
   query: string,
   requestedRetrieval: "text" | "vector" | "auto",
-  openai: OpenAI,
+  openai: OpenAI | null,
   env: ReturnType<typeof getServerEnv>,
 ): Promise<{ retrieval: RetrievalMode; rows: RagSearchResult[] }> {
   if (requestedRetrieval === "text") {
@@ -79,84 +125,110 @@ async function buildCandidates(
   return { retrieval: "hybrid", rows: capPerVideo(rrfFuse([vector, text])) };
 }
 
-async function generateAnswer(query: string, sources: RagSource[], openai: OpenAI, env: ReturnType<typeof getServerEnv>) {
-  const completion = await openai.chat.completions.create({
-    model: env.ragAnswerModel,
-    temperature: 0.2,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: [
-          "You are a concise BJJ research assistant.",
-          "Answer only from the provided transcript chunks.",
-          "Do not invent techniques, videos, timestamps, or claims.",
-          "Each source may include technique, position, difficulty, and gi_nogi tags; use them to frame the answer accurately.",
-          "If evidence is weak, say so in caveats.",
-          "Return valid JSON only with keys: answer, citations, key_takeaways, follow_up_searches, caveats.",
-          "citations must be copied from provided sources and include title, citation, start_seconds, end_seconds, watch_url.",
-          "If any source supports the answer, include at least one citation.",
-          "Prefer citing 2 or more distinct videos when multiple sources support the answer, rather than repeating one video at different timestamps.",
-          "Use short paragraphs and practical jiu-jitsu language.",
-        ].join(" "),
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          query,
-          task: "Answer the question using only these retrieved transcript chunks.",
-          sources,
-        }),
-      },
-    ],
-  });
-
-  const content = completion.choices[0]?.message.content ?? "{}";
-  const parsed = JSON.parse(content) as unknown;
-  return coerceAnswer(parsed);
-}
-
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => ({})) as { query?: unknown; retrieval?: unknown };
+  const body = await request.json().catch(() => ({})) as {
+    query?: unknown;
+    retrieval?: unknown;
+    provider?: unknown;
+    conversation?: unknown;
+    context_ids?: unknown;
+  };
   const query = typeof body.query === "string" ? body.query.trim() : "";
   const requestedRetrieval = body.retrieval === "text" || body.retrieval === "vector" ? body.retrieval : "auto";
+  const requestedProvider = normalizeProvider(body.provider);
+  const conversation = normalizeConversation(body.conversation);
+  const contextIds = normalizeContextIds(body.context_ids);
 
   if (query.length < 2) {
     return NextResponse.json({ error: "Query must be at least 2 characters." }, { status: 400 });
   }
+  if (query.length > 1_000) {
+    return NextResponse.json({ error: "Query must be 1,000 characters or fewer." }, { status: 400 });
+  }
+
+  await logSearch({
+    query,
+    action: conversation.length > 0 ? "follow_up" : "ask",
+    provider: requestedProvider,
+    retrieval: requestedRetrieval,
+    metadata: {
+      conversation_turns: conversation.length,
+      retained_context_sources: contextIds.length,
+    },
+  });
 
   try {
     const env = getServerEnv();
-    if (!env.openaiApiKey) {
+    const hasOpenai = Boolean(env.openaiApiKey);
+    const hasOpenRouter = Boolean(env.openRouterApiKey);
+
+    // Resolve the answer provider: honor an explicit request, otherwise default
+    // to the local Qwen model when it's reachable (the Mac Studio), else OpenAI.
+    let provider: AnswerProvider = requestedProvider
+      ?? ((await probeQwen(env)) ? "qwen" : hasOpenRouter ? "openrouter" : "openai");
+    if (provider === "openrouter" && !hasOpenRouter) {
+      return NextResponse.json({ error: "Missing OPENROUTER_API_KEY." }, { status: 500 });
+    }
+    if (provider === "openai" && !hasOpenai) {
       return NextResponse.json({ error: "Missing OPENAI_API_KEY." }, { status: 500 });
     }
 
-    const openai = new OpenAI({ apiKey: env.openaiApiKey });
-    const { retrieval, rows } = await buildCandidates(query, requestedRetrieval, openai, env);
+    // Retrieval (embeddings + rerank) always runs on OpenAI; the provider choice
+    // only swaps the model that writes the final answer. Without an OpenAI key we
+    // degrade to text-only search and skip reranking so local providers still work.
+    const openai = hasOpenai ? new OpenAI({ apiKey: env.openaiApiKey }) : null;
+    const retrievalQuery = conversation.length > 0
+      ? [...conversation.map((turn) => turn.question), query].join(" | ").slice(0, 2_000)
+      : query;
+    const [{ retrieval, rows }, priorRows] = await Promise.all([
+      buildCandidates(retrievalQuery, openai ? requestedRetrieval : "text", openai, env),
+      contextResults(contextIds),
+    ]);
+    const candidates = capPerVideo(filterDegenerate(uniqueRows([...priorRows, ...rows])));
 
-    if (rows.length === 0) {
+    if (candidates.length === 0) {
       return NextResponse.json({ error: "No sources found to answer from." }, { status: 404 });
     }
 
     // Rerank the diverse candidate pool for true relevance, keep the top slice,
     // then enrich with overlapping technique metadata for grounded citations.
-    const pool = rows.slice(0, RERANK_POOL);
-    const reranked = env.ragRerankEnabled
-      ? await rerankWithLLM(query, pool, openai, env.ragRerankModel, RESULT_LIMIT)
+    const pool = candidates.slice(0, RERANK_POOL);
+    const didRerank = Boolean(openai && env.ragRerankEnabled);
+    const reranked = openai && env.ragRerankEnabled
+      ? await rerankWithLLM(retrievalQuery, pool, openai, env.ragRerankModel, RESULT_LIMIT)
       : pool;
     const top = await refineResultTimestamps(query, reranked.slice(0, RESULT_LIMIT));
     const enriched = await enrichWithTechniques(top);
     const sources = enriched.map(({ row, technique }, index) => formatRagSource(row, index, technique));
 
-    const answer = await generateAnswer(query, sources, openai, env);
+    let generation;
+    try {
+      generation = await generateAnswer(provider, query, sources, env, openai, conversation);
+    } catch (genError) {
+      // Follow the answer-engine order for a transparent server-side fallback.
+      const fallback: AnswerProvider | null = provider !== "openrouter" && hasOpenRouter
+        ? "openrouter"
+        : provider !== "openai" && hasOpenai
+          ? "openai"
+          : null;
+      if (fallback) {
+        provider = fallback;
+        generation = await generateAnswer(fallback, query, sources, env, openai, conversation);
+      } else {
+        throw genError;
+      }
+    }
 
     return NextResponse.json({
       query,
-      model: env.ragAnswerModel,
+      provider,
+      model: providerModel(provider, env),
       retrieval,
-      reranked: env.ragRerankEnabled,
+      reranked: didRerank,
       source_count: sources.length,
-      answer,
+      context_ids: top.map((row) => row.id),
+      usage: generation.usage,
+      answer: generation.answer,
     });
   } catch (error) {
     return NextResponse.json(
