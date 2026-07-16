@@ -15,3 +15,6 @@ design-mockup/
 
 # Local machine run notes (port, setup) — not part of the shipped app
 LOCAL.md
+
+# Eval report dumps: contain verbatim third-party transcripts + project refs. Keep local, do not commit.
+docs/evals/*.json
