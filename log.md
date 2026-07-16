@@ -1,5 +1,17 @@
 # Log
 
+## 2026-07-15
+
+Added an opt-in **LangGraph · Experimental** toggle inside the follow-up composer while leaving Classic as the default. Each turn can independently use Classic or the separate `/api/rag/graph-follow-up` endpoint and always honors the currently selected answer provider. Mixed conversations are supported because both paths return the same answer/context contract.
+
+The experimental StateGraph runs six observable nodes: contextualize, retrieve, rerank, enrich, generate, and validate. Contextualize rewrites conversational follow-ups into standalone BJJ searches and classifies them as `same_topic` or `new_topic`; only same-topic turns retain the previous transcript IDs. Generation supports Qwen, OpenRouter, Claude, and OpenAI with the existing fallback order. The final node removes citations that cannot be matched to a retrieved title/timestamp or exact watch URL. The UI shows the routing decision, total time, and expandable node trace beneath each experimental answer.
+
+Extracted the classic route's retrieval/context/rerank/enrichment primitives into `src/lib/ragPipeline.ts`, and made both the classic route and experimental graph use them. This keeps the experiment separate at the orchestration layer without duplicating core RAG math.
+
+Added `docs/migrations/2026-07-15-followup-experiments.sql` for the server-only `rag_followup_experiment_runs` table plus a failure-safe logger. The table uses the required `rag_` prefix, RLS, no browser grants, and records thread/turn, requested and actual provider, topic relationship, retrieval mode, source count, latency, trace, success, and an error code. A missing table only emits a server warning and never breaks a follow-up.
+
+Verification: `npm run typecheck` passed. A live initial Ask returned HTTP 200; a related experimental follow-up returned HTTP 200, classified `same_topic`, retained prior evidence, used eight sources and two verified citations, and returned all six trace nodes. A deliberate switch from knee-cut defense to armbar escape returned HTTP 200, classified `new_topic`, used fresh hybrid context, and returned two verified citations.
+
 ## 2026-07-14
 
 Completed the multi-provider Ask AI and conversational follow-up work. Split answer generation into server-only provider infrastructure (`src/lib/answerProviders.ts`) and client-safe provider metadata (`src/lib/providers.ts`). The Answer Engine selector now detects and displays providers in this order: local Qwen, OpenRouter Qwen3 235B A22B, Claude CLI, and OpenAI. Local Qwen availability is verified against Ollama's installed model list; remote providers are enabled only when their server-side credentials exist. The selected provider controls final-answer generation, while OpenAI embeddings and the optional reranker continue to power retrieval independently.

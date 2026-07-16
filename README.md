@@ -20,6 +20,7 @@ It reads a read-only Supabase dataset of transcript data and never writes back t
 - Server-side Supabase service-role access only
 - Full semantic-search coverage across the embedded transcript corpus
 - Generated cited answers through `/api/rag/ask`, enriched with overlapping technique metadata
+- Opt-in LangGraph follow-ups that classify topic continuity, retrieve context, and validate citations without replacing the classic path
 - Home-page `System Map` tab visualizes the pipeline, corpus coverage, and table roles
 
 ## Local Setup
@@ -50,6 +51,8 @@ RAG_TEST_PROJECT_REF=YOUR_PROJECT_REF
 The browser never receives the service-role or model-provider keys. API routes own all database and model access.
 
 Run `docs/migrations/2026-07-14-search-logging.sql` once in the Supabase SQL editor to create the server-only search history table. After that, keyword searches, semantic searches, analyses, Ask AI questions, and conversational follow-ups are logged automatically.
+
+Run `docs/migrations/2026-07-15-followup-experiments.sql` once to create the optional, server-only `rag_followup_experiment_runs` table. The experimental follow-up still works before the migration is installed; only its evaluation telemetry is skipped.
 
 ## How The Technology Works
 
@@ -102,6 +105,7 @@ The important separation:
 - `embedding` holds vector representations; 12,104 chunks are embedded; the transcript corpus has full vector coverage.
 - API routes own all database access so secrets stay server-side.
 - `rag_search_logs` stores every user-triggered query and action type; browser clients cannot access it directly.
+- `rag_followup_experiment_runs` stores only experimental LangGraph run metadata, timing, routing, and node traces; it is also server-only.
 - `/api/rag/analyze` reruns the current search, sends the top chunks to a small/fast model, and returns a structured watch plan.
 - `/api/rag/vector-search` embeds the query and calls `match_rag_transcript_chunks`.
 - `/api/rag/ask` fuses vector + text retrieval with Reciprocal Rank Fusion, caps sources per video, reranks by intent, enriches with technique metadata, and returns a cited answer. Retrieval helpers live in `src/lib/ragRetrieval.ts`.
@@ -119,6 +123,7 @@ Tables used:
 - `rag_creators`
 - `rag_transcript_chunks`
 - `rag_search_logs`
+- `rag_followup_experiment_runs` (optional experimental telemetry)
 
 Current dataset:
 
@@ -136,6 +141,7 @@ The home page has two tabs:
   - `Analyze Results`: shown after a search; summarizes the best watch moments and study takeaways from the current results.
   - `Semantic Search`: embeds the query and searches the embedded chunks by meaning.
   - `Ask`: generates an answer using retrieved chunks and citations.
+  - `Ask a follow-up`: defaults to the proven Classic path. An explicit `LangGraph · Experimental` toggle runs a separate workflow that decides whether the user continued or changed topics, chooses whether to retain earlier sources, and validates returned citations.
 - `System Map`: visual explanation of the RAG data flow, table roles, current state, and next steps.
 
 Good test queries in the current text-search build:

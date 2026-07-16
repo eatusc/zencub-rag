@@ -74,6 +74,22 @@ Ask button
 
 The database-native versions of hybrid fusion, the HNSW/GIN indexes, and optional degenerate-chunk cleanup are in `docs/migrations/2026-07-07-hybrid-rrf-index-cleanup.sql` for running in the Supabase SQL editor.
 
+Experimental follow-up flow:
+
+```text
+LangGraph · Experimental toggle
+  -> POST /api/rag/graph-follow-up
+    -> contextualize: rewrite the follow-up and classify same topic vs new topic
+      -> retrieve: retain prior sources only for the same topic, then run shared hybrid RAG
+        -> rerank by intent
+          -> enrich timestamps and technique metadata
+            -> generate with the currently selected answer provider
+              -> validate citations against retrieved sources
+                -> return answer + node trace
+```
+
+This path is deliberately separate from `/api/rag/ask`. Classic remains the default. Both paths use the shared primitives in `src/lib/ragPipeline.ts`, so retrieval math cannot silently drift. The graph supports all answer providers and server-side fallback, but adds topic routing and citation validation. `rag_followup_experiment_runs` stores server-only evaluation telemetry after `docs/migrations/2026-07-15-followup-experiments.sql` is installed; missing telemetry never blocks a user answer.
+
 ## Visual Map In The App
 
 The home page has two tabs:
@@ -123,6 +139,8 @@ ragExamples.ts
 | `rag_video_attributions` | Creator/instructor attribution links |
 | `rag_creators` | Canonical creator names, aliases, opt-out field |
 | `rag_transcript_chunks` | Searchable timestamped evidence chunks |
+| `rag_search_logs` | Server-only query/action analytics |
+| `rag_followup_experiment_runs` | Server-only experimental follow-up timing, routing, and traces |
 
 ## Privacy Rule
 

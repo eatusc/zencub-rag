@@ -33,6 +33,7 @@ import type {
   RagAnalyzeResponse,
   RagAnswer,
   RagAskResponse,
+  RagExperimentalFollowUpResponse,
   RagGraphAskResponse,
   RagGraphTraceEntry,
   RagSearchResponse,
@@ -64,7 +65,25 @@ function scoreFor(result: RagSearchResult) {
 
 type Tab = "search" | "map";
 type Mode = "keyword" | "semantic";
-type FollowUpTurn = { question: string; response: RagAskResponse };
+type FollowUpEngine = "classic" | "langgraph";
+type FollowUpResponse = RagAskResponse & {
+  engine: FollowUpEngine;
+  relationship?: "same_topic" | "new_topic";
+  trace?: RagGraphTraceEntry[];
+  total_ms?: number;
+};
+type FollowUpTurn = { question: string; response: FollowUpResponse };
+
+function createThreadId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
 
 // One engine's result inside the side-by-side comparison. `trace`/`serverMs` are
 // only populated for the LangGraph engine, which reports its executed nodes.
@@ -146,6 +165,7 @@ const TABLE_ROWS: Array<{ table: string; count: string; type: "Core" | "Meta" | 
   { table: "rag_creators", count: "468", type: "Meta", desc: "Canonical creator names, aliases, opt-out field." },
   { table: "rag_transcript_chunks", count: "12,104", type: "Vectors", desc: "Searchable timestamped chunks + embedding vectors." },
   { table: "rag_search_logs", count: "Live", type: "Logs", desc: "Every keyword, semantic, analysis, Ask AI, and follow-up query." },
+  { table: "rag_followup_experiment_runs", count: "Ready", type: "Logs", desc: "Server-only LangGraph follow-up timing, routing, model, and outcome telemetry." },
 ];
 
 const MODEL_USAGE_ROWS = [
@@ -234,6 +254,8 @@ export function SearchClient() {
   const [followUpQuestion, setFollowUpQuestion] = useState("");
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [followUpEngine, setFollowUpEngine] = useState<FollowUpEngine>("classic");
+  const [followUpThreadId, setFollowUpThreadId] = useState("");
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [provider, setProvider] = useState<AnswerProvider | "">("");
 
@@ -352,6 +374,7 @@ export function SearchClient() {
       setFollowUps([]);
       setFollowUpQuestion("");
       setFollowUpError(null);
+      setFollowUpThreadId(createThreadId());
       setProvider(payload.provider);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Ask failed");
@@ -428,20 +451,31 @@ export function SearchClient() {
     setFollowUpLoading(true);
     setFollowUpError(null);
     try {
-      const res = await fetch("/api/rag/ask", {
+      const threadId = followUpThreadId || createThreadId();
+      const selectedProvider = provider || latestResponse?.provider || answerProvider;
+      const endpoint = followUpEngine === "langgraph" ? "/api/rag/graph-follow-up" : "/api/rag/ask";
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: trimmed,
           retrieval: "auto",
-          provider: latestResponse?.provider ?? answerProvider,
+          // Honor the currently selected answer engine for this turn. Fall back
+          // to the conversation's latest provider only if no engine is selected.
+          provider: selectedProvider,
           conversation,
           context_ids: latestResponse?.context_ids ?? answerContextIds,
+          thread_id: threadId,
+          turn_index: followUps.length + 1,
         }),
       });
-      const payload = (await res.json()) as RagAskResponse & { error?: string };
+      const payload = (await res.json()) as (RagAskResponse | RagExperimentalFollowUpResponse) & { error?: string };
       if (!res.ok) throw new Error(payload.error ?? "Follow-up failed");
-      setFollowUps((current) => [...current, { question: trimmed, response: payload }]);
+      const response: FollowUpResponse = followUpEngine === "langgraph"
+        ? payload as RagExperimentalFollowUpResponse
+        : { ...(payload as RagAskResponse), engine: "classic" };
+      setFollowUps((current) => [...current, { question: trimmed, response }]);
+      setFollowUpThreadId("thread_id" in payload ? payload.thread_id : threadId);
       setFollowUpQuestion("");
     } catch (err) {
       setFollowUpError(err instanceof Error ? err.message : "Follow-up failed");
@@ -664,7 +698,7 @@ export function SearchClient() {
                   <div>
                     <h3 className="text-sm font-bold">Ask a follow-up</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Your next question will use this answer, the conversation, and its transcript context.
+                      Your next question will use the selected answer engine, this conversation, and its transcript context.
                     </p>
                   </div>
 
@@ -677,7 +711,10 @@ export function SearchClient() {
                           </div>
                           <div className="rounded-xl rounded-tl-sm border border-border bg-secondary p-3.5 space-y-2.5">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">AI follow-up</span>
+                              <span className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-muted-foreground">
+                                {turn.response.engine === "langgraph" ? <Workflow size={10} /> : <Cpu size={10} />}
+                                {turn.response.engine === "langgraph" ? "LangGraph experiment" : "Classic follow-up"}
+                              </span>
                               <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground">
                                 <Cpu size={10} />
                                 {PROVIDER_META[turn.response.provider].label} · {turn.response.model}
@@ -723,13 +760,63 @@ export function SearchClient() {
                               model={turn.response.model}
                               usage={turn.response.usage}
                             />
+                            {turn.response.engine === "langgraph" && (
+                              <details className="rounded-lg border border-border bg-card px-3 py-2">
+                                <summary className="cursor-pointer text-[11px] font-bold text-foreground">
+                                  Experimental flow · {turn.response.relationship === "new_topic" ? "new topic" : "continued topic"}
+                                  {turn.response.total_ms ? ` · ${turn.response.total_ms}ms` : ""}
+                                </summary>
+                                {turn.response.trace && (
+                                  <ol className="mt-2 space-y-1.5">
+                                    {turn.response.trace.map((node) => (
+                                      <li key={`${node.node}-${node.ms}`} className="flex items-start gap-2 text-[10px] text-muted-foreground">
+                                        <span className="font-bold text-foreground">{node.label}</span>
+                                        <span className="min-w-0 flex-1">{node.detail}</span>
+                                        <span className="shrink-0 tabular-nums">{node.ms}ms</span>
+                                      </li>
+                                    ))}
+                                  </ol>
+                                )}
+                              </details>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  <form onSubmit={askFollowUp} className="space-y-2">
+                  <form onSubmit={askFollowUp} className="space-y-3">
+                    <div className="rounded-xl border border-border bg-secondary/60 p-3 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-muted-foreground">Follow-up path</span>
+                        <div className="flex rounded-lg border border-border bg-card p-1" role="group" aria-label="Follow-up path">
+                          <button
+                            type="button"
+                            onClick={() => setFollowUpEngine("classic")}
+                            className={followUpEngine === "classic"
+                              ? "rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-primary-foreground"
+                              : "rounded-md px-2.5 py-1 text-[11px] font-bold text-muted-foreground hover:text-foreground"}
+                          >
+                            Classic
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFollowUpEngine("langgraph")}
+                            className={followUpEngine === "langgraph"
+                              ? "flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-primary-foreground"
+                              : "flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold text-muted-foreground hover:text-foreground"}
+                          >
+                            <Workflow size={10} />
+                            LangGraph · Experimental
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        {followUpEngine === "classic"
+                          ? "Classic keeps the proven follow-up path. It carries the conversation and previous transcript sources forward."
+                          : "Experimental first decides whether you continued the topic or changed subjects, retrieves the right context, then verifies citations before answering."}
+                      </p>
+                    </div>
                     <textarea
                       value={followUpQuestion}
                       onChange={(event) => setFollowUpQuestion(event.target.value)}

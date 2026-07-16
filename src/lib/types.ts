@@ -111,3 +111,11 @@ export type RagGraphAskResponse = {
   trace: RagGraphTraceEntry[];
   total_ms: number;
 };
+
+export type RagExperimentalFollowUpResponse = RagAskResponse & {
+  engine: "langgraph";
+  thread_id: string;
+  relationship: "same_topic" | "new_topic";
+  trace: RagGraphTraceEntry[];
+  total_ms: number;
+};
