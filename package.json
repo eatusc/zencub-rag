@@ -2,9 +2,10 @@
   "name": "zencub-rag",
   "version": "0.1.0",
   "private": true,
-  "description": "A RAG app for BJJ video transcripts: hybrid (keyword + semantic) retrieval with Reciprocal Rank Fusion, LLM reranking, and citation-backed generated answers, built on Next.js, Supabase/pgvector, and OpenAI.",
+  "description": "A LangGraph RAG app for BJJ video transcripts with persistent workflows, hybrid retrieval, instructor comparison, and citation-backed answers, built on Next.js and Supabase/pgvector.",
   "keywords": [
     "rag",
+    "langgraph",
     "retrieval-augmented-generation",
     "semantic-search",
     "vector-search",

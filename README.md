@@ -1,6 +1,6 @@
 # ZenCub RAG
 
-A Retrieval-Augmented Generation app that turns a BJJ (Brazilian Jiu-Jitsu) video-transcript library into a searchable, citation-backed research assistant. It runs hybrid retrieval (keyword + semantic), fuses the results, reranks them by intent, and generates answers grounded only in the retrieved source clips — every claim links back to a video and timestamp.
+A LangGraph-powered Retrieval-Augmented Generation app that turns a BJJ (Brazilian Jiu-Jitsu) video-transcript library into a searchable, citation-backed research assistant. It combines persistent checkpointed workflows, parallel retrieval and instructor-analysis branches, human approval/recovery labs, hybrid keyword + semantic retrieval, and answers grounded in timestamped source clips.
 
 It reads a read-only Supabase dataset of transcript data and never writes back to the source tables. All database access is server-side; secrets never reach the browser.
 
