@@ -1,5 +1,11 @@
 # Log
 
+## 2026-07-17 — Bring your own database
+
+Added a public-repository onboarding path so users do not need the author's TEST database. `docs/migrations/2026-07-17-rag-core-bootstrap.sql` creates an empty, compatible Supabase corpus schema: the six core `rag_*` tables, pgvector support, keyword/vector RPCs, indexes, RLS, browser-role revocations, and service-role-only grants. It contains no ZenCub records or third-party transcript content.
+
+Added `docs/BRING_YOUR_OWN_DATABASE.md` with project creation, credential boundaries, import order, chunk/transcript/attribution contracts, embedding backfill, optional LangGraph migrations, and verification. It explicitly distinguishes server-side credentials from network privacy: endpoints are private only when the deployment itself restricts access. Ingestion/transcription remains upstream and users are instructed to load only content they are authorized to process.
+
 ## 2026-07-17 — Instructor Compare
 
 Changed the Instructor Compare default from Local Qwen to OpenRouter Qwen3 235B because the initial real comparison retained more validated evidence, consensus, and differences. Local Qwen remains an explicit free/private option and GPT-4o Mini remains selectable. Requests that omit `provider` now select `openrouter`, the browser initially selects Qwen3 235B, and the default badge/copy/documentation reflect the quality-first choice without changing provider defaults elsewhere in the app. A real provider-omitted TEST request confirmed `openrouter` / `qwen/qwen3-235b-a22b-2507`, completing in 23.7s with 5,298 reported generation tokens, three supported consensus claims, and two differences.

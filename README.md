@@ -35,6 +35,8 @@ cp .env.example .env.local
 npm run dev
 ```
 
+To use your own data, follow [Bring Your Own Database](docs/BRING_YOUR_OWN_DATABASE.md). It includes a fresh Supabase bootstrap migration, required import order and JSON contracts, embedding backfill, RLS/security rules, and optional LangGraph setup. This repository does not include or copy the author's database contents.
+
 Required env:
 
 ```bash

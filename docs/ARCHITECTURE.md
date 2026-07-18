@@ -6,6 +6,7 @@
 
 - This repo owns the RAG UI, RAG API routes, embedding jobs, and answer generation.
 - Transcript ingestion, transcription, and technique extraction happen in an upstream pipeline, outside this repo.
+- A fresh user-owned Supabase project can be bootstrapped with `docs/migrations/2026-07-17-rag-core-bootstrap.sql`; the import contract and safe setup sequence are documented in `docs/BRING_YOUR_OWN_DATABASE.md`.
 - The RAG app should not write to non-`rag_` tables.
 - Source data enters through deliberate sync jobs, never live writes.
 
