@@ -12,13 +12,14 @@ import {
   Database,
   Dumbbell,
   ExternalLink,
+  FlaskConical,
   GitBranch,
   GitCompareArrows,
   Lightbulb,
-  Link2,
   ListOrdered,
   Loader2,
   MessageSquare,
+  Play,
   Search,
   Send,
   Sparkles,
@@ -32,6 +33,7 @@ import type {
   RagAnalysis,
   RagAnalyzeResponse,
   RagAnswer,
+  RagAnswerCitation,
   RagAskResponse,
   RagExperimentalFollowUpResponse,
   RagGraphAskResponse,
@@ -42,16 +44,30 @@ import type {
 } from "@/lib/types";
 import {
   PROVIDER_META,
+  normalizeProvider,
   type AnswerProvider,
   type ProviderInfo,
 } from "@/lib/providers";
 import { timestampUrl } from "@/lib/ragUtils";
+import { LangTests } from "@/components/LangTests";
+import { InstructorCompare } from "@/components/InstructorCompare";
 
 function secondsLabel(value: number | string | null | undefined) {
   const numeric = typeof value === "string" ? Number(value) : value;
   if (!Number.isFinite(numeric ?? NaN)) return "0:00";
   const total = Math.max(0, Math.floor(numeric as number));
   return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, "0")}`;
+}
+
+function timestampRangeLabel(
+  start: number | string | null | undefined,
+  end: number | string | null | undefined,
+) {
+  const startSeconds = Number(start);
+  const endSeconds = Number(end);
+  return Number.isFinite(endSeconds) && endSeconds > startSeconds
+    ? `${secondsLabel(start)}–${secondsLabel(end)}`
+    : secondsLabel(start);
 }
 
 function titleFor(result: RagSearchResult) {
@@ -63,7 +79,7 @@ function scoreFor(result: RagSearchResult) {
   return raw.toFixed(2);
 }
 
-type Tab = "search" | "map";
+type Tab = "search" | "app" | "compare" | "map" | "tests";
 type Mode = "keyword" | "semantic";
 type FollowUpEngine = "classic" | "langgraph";
 type FollowUpResponse = RagAskResponse & {
@@ -102,6 +118,8 @@ type EngineResult = {
 };
 
 type Comparison = { classic: EngineResult; graph: EngineResult } | null;
+
+const ANSWER_PROVIDER_STORAGE_KEY = "zencub-rag:answer-provider";
 
 async function postTimed<T>(url: string, body: unknown) {
   const started = performance.now();
@@ -247,7 +265,7 @@ export function SearchClient() {
   const [answerModel, setAnswerModel] = useState("");
   const [answerUsage, setAnswerUsage] = useState<RagTokenUsage | null>(null);
   const [answerProvider, setAnswerProvider] = useState<AnswerProvider | "">("");
-  const [answerRetrieval, setAnswerRetrieval] = useState<"vector" | "text" | "hybrid" | "">("");
+  const [answerRetrieval, setAnswerRetrieval] = useState<"vector" | "text" | "metadata" | "hybrid" | "">("");
   const [answerQuery, setAnswerQuery] = useState("");
   const [answerContextIds, setAnswerContextIds] = useState<string[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpTurn[]>([]);
@@ -267,14 +285,33 @@ export function SearchClient() {
       .then((res) => res.json())
       .then((data: { providers?: ProviderInfo[]; default?: AnswerProvider }) => {
         if (cancelled) return;
-        setProviders(data.providers ?? []);
-        setProvider(data.default ?? "");
+        const detected = data.providers ?? [];
+        let remembered: AnswerProvider | undefined;
+        try {
+          remembered = normalizeProvider(localStorage.getItem(ANSWER_PROVIDER_STORAGE_KEY));
+        } catch {
+          // Storage can be disabled in private or locked-down browser contexts.
+        }
+        const selected = remembered && detected.some((item) => item.id === remembered && item.available)
+          ? remembered
+          : data.default ?? "";
+        setProviders(detected);
+        setProvider(selected);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
+
+  function selectProvider(next: AnswerProvider) {
+    setProvider(next);
+    try {
+      localStorage.setItem(ANSWER_PROVIDER_STORAGE_KEY, next);
+    } catch {
+      // The in-memory choice still works when persistent storage is unavailable.
+    }
+  }
 
   async function runSearch(trimmed: string) {
     setLoading(true);
@@ -351,8 +388,8 @@ export function SearchClient() {
     }
   }
 
-  async function askQuestion() {
-    const trimmed = searchedQuery || query.trim();
+  async function askQuestion(questionOverride?: string, providerOverride?: AnswerProvider) {
+    const trimmed = questionOverride?.trim() || searchedQuery || query.trim();
     if (trimmed.length < 2) return;
     setAskLoading(true);
     setActionError(null);
@@ -360,7 +397,7 @@ export function SearchClient() {
       const res = await fetch("/api/rag/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: trimmed, retrieval: "auto", provider: provider || undefined }),
+        body: JSON.stringify({ query: trimmed, retrieval: "auto", provider: providerOverride || provider || undefined }),
       });
       const payload = (await res.json()) as RagAskResponse & { error?: string };
       if (!res.ok) throw new Error(payload.error ?? "Ask failed");
@@ -451,23 +488,40 @@ export function SearchClient() {
     setFollowUpLoading(true);
     setFollowUpError(null);
     try {
-      const threadId = followUpThreadId || createThreadId();
       const selectedProvider = provider || latestResponse?.provider || answerProvider;
       const endpoint = followUpEngine === "langgraph" ? "/api/rag/graph-follow-up" : "/api/rag/ask";
+      const hasPersistedGraphTurn = followUps.some((turn) => turn.response.engine === "langgraph");
+      // If classic turns were added after a persisted graph turn, start a new
+      // graph thread and seed the complete visible conversation once. This
+      // avoids silently omitting classic turns from an older checkpoint.
+      const restartGraphTrack = followUpEngine === "langgraph"
+        && hasPersistedGraphTurn
+        && latestResponse?.engine === "classic";
+      const threadId = restartGraphTrack ? createThreadId() : followUpThreadId || createThreadId();
+      const shouldSeedGraph = !hasPersistedGraphTurn || restartGraphTrack;
+      const requestBody = followUpEngine === "langgraph"
+        ? {
+            query: trimmed,
+            provider: selectedProvider,
+            thread_id: threadId,
+            ...(shouldSeedGraph ? {
+              seed: {
+                conversation,
+                context_ids: latestResponse?.context_ids ?? answerContextIds,
+              },
+            } : {}),
+          }
+        : {
+            query: trimmed,
+            retrieval: "auto",
+            provider: selectedProvider,
+            conversation,
+            context_ids: latestResponse?.context_ids ?? answerContextIds,
+          };
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: trimmed,
-          retrieval: "auto",
-          // Honor the currently selected answer engine for this turn. Fall back
-          // to the conversation's latest provider only if no engine is selected.
-          provider: selectedProvider,
-          conversation,
-          context_ids: latestResponse?.context_ids ?? answerContextIds,
-          thread_id: threadId,
-          turn_index: followUps.length + 1,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const payload = (await res.json()) as (RagAskResponse | RagExperimentalFollowUpResponse) & { error?: string };
       if (!res.ok) throw new Error(payload.error ?? "Follow-up failed");
@@ -487,6 +541,12 @@ export function SearchClient() {
   const latestConversationAnswer = followUps.at(-1)?.response.answer ?? answer;
   const followUpPlaceholder = latestConversationAnswer?.suggested_follow_up
     ?? "Ask a follow-up about this answer…";
+  const inAppProviders = providers.filter((item) => item.id === "openrouter" || item.id === "openai");
+  const inAppProvider: AnswerProvider | "" = inAppProviders.some((item) => item.id === provider && item.available)
+    ? provider
+    : inAppProviders.find((item) => item.id === "openrouter" && item.available)?.id
+      ?? inAppProviders.find((item) => item.id === "openai" && item.available)?.id
+      ?? "";
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -495,10 +555,40 @@ export function SearchClient() {
     void runSearch(trimmed);
   }
 
+  function submitAsk(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = query.trim();
+    if (trimmed.length < 2) return;
+    if (!inAppProvider) {
+      setActionError("Qwen3 235B or OpenAI must be available to use the In App Experience.");
+      return;
+    }
+    void askQuestion(trimmed, inAppProvider);
+  }
+
   function useExample(next: string) {
     setQuery(next);
     setTab("search");
     void runSearch(next);
+  }
+
+  function useAnswerSuggestion(next: string) {
+    setQuery(next);
+    if (tab === "app") {
+      if (inAppProvider) void askQuestion(next, inAppProvider);
+      return;
+    }
+    useExample(next);
+  }
+
+  function showInAppExperience() {
+    setTab("app");
+    setActionError(null);
+    if (answerProvider && answerProvider !== "openrouter" && answerProvider !== "openai") {
+      setAnswer(null);
+      setFollowUps([]);
+      setFollowUpError(null);
+    }
   }
 
   return (
@@ -517,35 +607,60 @@ export function SearchClient() {
         </header>
 
         {/* Tabs */}
-        <div className="flex gap-1 p-1 rounded-xl bg-secondary border border-border w-fit mb-5">
+        <div className="flex max-w-full gap-1 overflow-x-auto p-1 rounded-xl bg-secondary border border-border w-fit mb-5">
           <TabButton active={tab === "search"} onClick={() => setTab("search")} icon={Search} label="Search" />
+          <TabButton active={tab === "app"} onClick={showInAppExperience} icon={MessageSquare} label="In App Experience" />
+          <TabButton active={tab === "compare"} onClick={() => setTab("compare")} icon={Users} label="Instructor Compare" />
           <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={Workflow} label="System Map" />
+          <TabButton active={tab === "tests"} onClick={() => setTab("tests")} icon={FlaskConical} label="Lang Tests" />
         </div>
 
-        {tab === "search" ? (
+        {tab !== "map" && tab !== "tests" && tab !== "compare" ? (
           <div className="space-y-4">
             {/* Search bar */}
-            <form onSubmit={submit} className="flex items-center gap-3 px-4 sm:px-5 py-3 rounded-2xl bg-card border border-border shadow-sm">
-              <Search className="shrink-0 text-muted-foreground" size={19} />
+            <form onSubmit={tab === "app" ? submitAsk : submit} className="flex items-center gap-3 px-4 sm:px-5 py-3 rounded-2xl bg-card border border-border shadow-sm">
+              {tab === "app"
+                ? <Sparkles className="shrink-0 text-accent" size={19} />
+                : <Search className="shrink-0 text-muted-foreground" size={19} />}
               <input
                 className="flex-1 min-w-0 bg-transparent text-foreground placeholder:text-muted-foreground text-[15px] outline-none"
-                placeholder="Search knee cut, saddle entries, crossface details..."
+                placeholder={tab === "app"
+                  ? "Ask about a technique, position, or problem..."
+                  : "Search knee cut, saddle entries, crossface details..."}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                aria-label="Search transcript chunks"
+                aria-label={tab === "app" ? "Ask ZenCub AI" : "Search transcript chunks"}
               />
-              <button
-                type="submit"
-                disabled={loading}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-60"
-              >
-                {loading && mode === "keyword" ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-                <span>Search</span>
-              </button>
+              <div className="group relative shrink-0">
+                <button
+                  type="submit"
+                  disabled={tab === "app" ? askLoading || !inAppProvider : loading}
+                  aria-describedby={tab === "app" ? "in-app-ask-tooltip" : undefined}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-60"
+                >
+                  {tab === "app" && askLoading
+                    ? <Loader2 size={15} className="animate-spin" />
+                    : tab === "app"
+                      ? <Sparkles size={15} />
+                      : loading && mode === "keyword"
+                        ? <Loader2 size={15} className="animate-spin" />
+                        : <Search size={15} />}
+                  <span>{tab === "app" ? (askLoading ? "Thinking…" : "Ask AI") : "Search"}</span>
+                </button>
+                {tab === "app" && (
+                  <span
+                    id="in-app-ask-tooltip"
+                    role="tooltip"
+                    className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-64 rounded-lg bg-foreground px-3 py-2 text-center text-xs font-medium leading-relaxed text-background opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                  >
+                    Use hybrid retrieval to answer from transcript evidence, with timestamped video references.
+                  </span>
+                )}
+              </div>
             </form>
 
             {/* Action buttons */}
-            <div className="flex flex-wrap gap-2">
+            {tab === "search" && <div className="flex flex-wrap gap-2">
               <ActionButton
                 onClick={runVectorSearch}
                 loading={loading && mode === "semantic"}
@@ -561,7 +676,7 @@ export function SearchClient() {
                 tooltip="Find the top keyword matches, then summarize the best watch moments, key details, and study order."
               />
               <ActionButton
-                onClick={askQuestion}
+                onClick={() => { void askQuestion(); }}
                 loading={askLoading}
                 icon={MessageSquare}
                 label="Ask AI"
@@ -574,10 +689,10 @@ export function SearchClient() {
                 label="Compare Engines"
                 tooltip="Run the same question through the classic OpenAI-SDK pipeline and a LangGraph/LangChain pipeline, side-by-side, with timing and the LangGraph node trace."
               />
-            </div>
+            </div>}
 
             {/* LangGraph reference */}
-            <div className="flex items-start gap-2.5 rounded-xl border border-border bg-secondary/50 px-3.5 py-2.5">
+            {tab === "search" && <div className="flex items-start gap-2.5 rounded-xl border border-border bg-secondary/50 px-3.5 py-2.5">
               <Workflow size={14} className="text-accent shrink-0 mt-0.5" />
               <p className="text-[12px] text-muted-foreground leading-relaxed">
                 <span className="font-bold text-foreground">Compare Engines</span> answers your query two ways — the classic
@@ -591,15 +706,19 @@ export function SearchClient() {
                   See how it works in the System Map →
                 </button>
               </p>
-            </div>
+            </div>}
 
             {/* Answer engine selector — only the providers this host can reach */}
             {providers.length > 0 && (
-              <ProviderSelector providers={providers} selected={provider} onSelect={setProvider} />
+              <ProviderSelector
+                providers={tab === "app" ? inAppProviders : providers}
+                selected={tab === "app" ? inAppProvider : provider}
+                onSelect={selectProvider}
+              />
             )}
 
             {/* Summary row */}
-            {searchedQuery && (
+            {tab === "search" && searchedQuery && (
               <div className="flex justify-between items-center text-xs text-muted-foreground px-1">
                 <span>
                   {results.length} result{results.length === 1 ? "" : "s"} for{" "}
@@ -609,11 +728,11 @@ export function SearchClient() {
               </div>
             )}
 
-            {error && <Banner tone="error">{error}</Banner>}
+            {tab === "search" && error && <Banner tone="error">{error}</Banner>}
             {actionError && <Banner tone="error">{actionError}</Banner>}
 
             {/* Engine Comparison */}
-            {comparison && <EngineComparison comparison={comparison} />}
+            {tab === "search" && comparison && <EngineComparison comparison={comparison} />}
 
             {/* AI Answer */}
             {answer && (
@@ -651,23 +770,7 @@ export function SearchClient() {
                   </ul>
                 )}
 
-                {answer.citations.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {answer.citations.map((c, i) => (
-                      <a
-                        key={i}
-                        href={c.watch_url ?? "#"}
-                        target={c.watch_url ? "_blank" : undefined}
-                        rel="noreferrer"
-                        className="flex items-center gap-1.5 text-[11px] font-bold text-foreground bg-secondary rounded-lg px-2.5 py-1.5 hover:bg-muted transition-colors no-underline"
-                      >
-                        <Link2 size={10} />
-                        {c.title}
-                        {c.start_seconds ? ` — ${secondsLabel(c.start_seconds)}` : ""}
-                      </a>
-                    ))}
-                  </div>
-                )}
+                <VideoReferences citations={answer.citations} />
 
                 {answer.follow_up_searches.length > 0 && (
                   <div className="flex flex-wrap gap-2 pt-1">
@@ -675,7 +778,7 @@ export function SearchClient() {
                       <button
                         key={i}
                         type="button"
-                        onClick={() => useExample(s)}
+                        onClick={() => useAnswerSuggestion(s)}
                         className="text-xs font-semibold text-foreground bg-secondary border border-border rounded-full px-3 py-1.5 hover:border-foreground/30 transition-colors"
                       >
                         {s}
@@ -733,23 +836,7 @@ export function SearchClient() {
                                 ))}
                               </ul>
                             )}
-                            {turn.response.answer.citations.length > 0 && (
-                              <div className="flex flex-wrap gap-1.5">
-                                {turn.response.answer.citations.map((citation, citationIndex) => (
-                                  <a
-                                    key={citationIndex}
-                                    href={citation.watch_url ?? "#"}
-                                    target={citation.watch_url ? "_blank" : undefined}
-                                    rel="noreferrer"
-                                    className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-[11px] font-bold text-foreground no-underline transition-colors hover:border-foreground/30"
-                                  >
-                                    <Link2 size={10} />
-                                    {citation.title}
-                                    {citation.start_seconds ? ` — ${secondsLabel(citation.start_seconds)}` : ""}
-                                  </a>
-                                ))}
-                              </div>
-                            )}
+                            <VideoReferences citations={turn.response.answer.citations} compact />
                             {turn.response.answer.caveats.length > 0 && (
                               <p className="border-t border-border pt-2 text-xs text-muted-foreground">
                                 {turn.response.answer.caveats.join(" · ")}
@@ -814,7 +901,7 @@ export function SearchClient() {
                       <p className="text-[11px] leading-relaxed text-muted-foreground">
                         {followUpEngine === "classic"
                           ? "Classic keeps the proven follow-up path. It carries the conversation and previous transcript sources forward."
-                          : "Experimental first decides whether you continued the topic or changed subjects, retrieves the right context, then verifies citations before answering."}
+                          : "LangGraph restores this thread from Postgres, runs parallel retrieval in a private subgraph, verifies citations, and checkpoints the new turn."}
                       </p>
                     </div>
                     <textarea
@@ -853,7 +940,7 @@ export function SearchClient() {
             )}
 
             {/* Corpus Analysis */}
-            {analysis && (
+            {tab === "search" && analysis && (
               <div className="rounded-2xl border border-border bg-card p-5 space-y-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-2">
@@ -971,7 +1058,7 @@ export function SearchClient() {
             )}
 
             {/* Results */}
-            <div className="space-y-3">
+            {tab === "search" && <div className="space-y-3">
               {loading && results.length === 0 && (
                 <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-10">
                   <Loader2 size={16} className="animate-spin" />
@@ -1022,10 +1109,14 @@ export function SearchClient() {
                   </article>
                 );
               })}
-            </div>
+            </div>}
           </div>
-        ) : (
+        ) : tab === "compare" ? (
+          <InstructorCompare providers={providers} />
+        ) : tab === "map" ? (
           <SystemMap onExample={useExample} />
+        ) : (
+          <LangTests />
         )}
       </div>
     </div>
@@ -1125,6 +1216,65 @@ function EngineComparison({ comparison }: { comparison: NonNullable<Comparison> 
   );
 }
 
+function VideoReferences({
+  citations,
+  compact = false,
+}: {
+  citations: RagAnswerCitation[];
+  compact?: boolean;
+}) {
+  if (citations.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {!compact && (
+        <p className="text-[11px] font-black uppercase tracking-widest text-muted-foreground">
+          Video references
+        </p>
+      )}
+      <div className={compact ? "grid gap-1.5" : "grid gap-2 sm:grid-cols-2"}>
+        {citations.map((citation, index) => (
+          <a
+            key={`${citation.citation}-${index}`}
+            href={citation.watch_url ?? undefined}
+            target={citation.watch_url ? "_blank" : undefined}
+            rel="noreferrer"
+            aria-label={`${citation.title}, relevant segment ${timestampRangeLabel(citation.start_seconds, citation.end_seconds)}`}
+            className="group flex min-w-0 items-center gap-2.5 overflow-hidden rounded-xl border border-border bg-secondary p-1.5 text-foreground no-underline transition-colors hover:border-foreground/30"
+          >
+            <span className="relative flex h-12 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-foreground/10 text-foreground/70">
+              <Play size={15} fill="currentColor" aria-hidden="true" />
+              {citation.thumbnail_url && (
+                // Plain img supports the corpus' mixed thumbnail hosts without
+                // widening Next Image's remote-host allowlist.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={citation.thumbnail_url}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  className="absolute inset-0 h-full w-full object-cover"
+                  onError={(event) => { event.currentTarget.style.display = "none"; }}
+                />
+              )}
+              <span className="absolute bottom-1 right-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-bold leading-none text-white">
+                {timestampRangeLabel(citation.start_seconds, citation.end_seconds)}
+              </span>
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="line-clamp-2 text-xs font-bold leading-snug">{citation.title}</span>
+              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                {citation.channel || "Watch video"}
+              </span>
+            </span>
+            {citation.watch_url && <ExternalLink size={12} className="mr-1 shrink-0 text-muted-foreground group-hover:text-foreground" />}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EngineColumn({ result, highlight }: { result: EngineResult; highlight: boolean }) {
   const answer = result.answer;
   const isGraph = result.engine === "langgraph";
@@ -1172,23 +1322,7 @@ function EngineColumn({ result, highlight }: { result: EngineResult; highlight: 
         </ul>
       )}
 
-      {answer.citations.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {answer.citations.map((c, i) => (
-            <a
-              key={i}
-              href={c.watch_url ?? "#"}
-              target={c.watch_url ? "_blank" : undefined}
-              rel="noreferrer"
-              className="flex items-center gap-1.5 text-[11px] font-bold text-foreground bg-card border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors no-underline"
-            >
-              <Link2 size={10} />
-              {c.title}
-              {c.start_seconds ? ` — ${secondsLabel(c.start_seconds)}` : ""}
-            </a>
-          ))}
-        </div>
-      )}
+      <VideoReferences citations={answer.citations} compact />
 
       {isGraph && result.trace && result.trace.length > 0 && (
         <div className="pt-1 border-t border-border">
@@ -1401,24 +1535,35 @@ function ProviderSelector({
       <div className="flex flex-wrap gap-1 p-1 rounded-xl bg-secondary border border-border">
         {providers.map((p) => {
           const active = selected === p.id;
+          const tooltip = p.available
+            ? `${PROVIDER_META[p.id].blurb} Model: ${p.model}.`
+            : `${PROVIDER_META[p.id].label} is not available on this host.`;
           return (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => p.available && onSelect(p.id)}
-              disabled={!p.available}
-              title={p.available ? `${PROVIDER_META[p.id].blurb} (${p.model})` : `${PROVIDER_META[p.id].label} not detected on this host`}
-              className={
-                active
-                  ? "flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
-                  : p.available
-                    ? "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                    : "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-muted-foreground/50 cursor-not-allowed"
-              }
-            >
-              {PROVIDER_META[p.id].label}
-              {!p.available && <span className="text-[10px] font-normal">· off</span>}
-            </button>
+            <div key={p.id} className="group/provider relative">
+              <button
+                type="button"
+                onClick={() => p.available && onSelect(p.id)}
+                disabled={!p.available}
+                aria-describedby={`provider-${p.id}-tooltip`}
+                className={
+                  active
+                    ? "flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
+                    : p.available
+                      ? "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                      : "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-muted-foreground/50 cursor-not-allowed"
+                }
+              >
+                {PROVIDER_META[p.id].label}
+                {!p.available && <span className="text-[10px] font-normal">· off</span>}
+              </button>
+              <span
+                id={`provider-${p.id}-tooltip`}
+                role="tooltip"
+                className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 w-64 -translate-x-1/2 rounded-lg bg-foreground px-3 py-2 text-center text-xs font-medium leading-relaxed text-background opacity-0 shadow-lg transition-opacity group-hover/provider:opacity-100 group-focus-within/provider:opacity-100"
+              >
+                {tooltip}
+              </span>
+            </div>
           );
         })}
       </div>

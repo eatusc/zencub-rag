@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { probeQwen } from "@/lib/answerProviders";
 import { getServerEnv } from "@/lib/env";
 import { logFollowUpExperiment } from "@/lib/followUpExperimentLogging";
-import { runExperimentalFollowUp } from "@/lib/langgraph/followUpGraph";
+import { listExperimentalFollowUpCheckpoints, runExperimentalFollowUp } from "@/lib/langgraph/followUpGraph";
+import { registerReplayThread } from "@/lib/langgraph/replayAuthorization";
 import { normalizeProvider, type AnswerProvider } from "@/lib/providers";
 import { normalizeContextIds, normalizeConversation } from "@/lib/ragPipeline";
 import { logSearch } from "@/lib/searchLogging";
 import type { RagExperimentalFollowUpResponse } from "@/lib/types";
+
+export const runtime = "nodejs";
 
 function normalizeThreadId(value: unknown): string {
   const candidate = typeof value === "string" ? value.trim() : "";
@@ -15,26 +18,25 @@ function normalizeThreadId(value: unknown): string {
     : crypto.randomUUID();
 }
 
-function normalizeTurnIndex(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : 1;
-}
-
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as {
     query?: unknown;
     provider?: unknown;
-    conversation?: unknown;
-    context_ids?: unknown;
     thread_id?: unknown;
-    turn_index?: unknown;
+    seed?: {
+      conversation?: unknown;
+      context_ids?: unknown;
+    };
+    test_failure?: unknown;
+    enable_checkpoint_replay?: unknown;
   };
   const query = typeof body.query === "string" ? body.query.trim() : "";
   const requestedProvider = normalizeProvider(body.provider);
-  const conversation = normalizeConversation(body.conversation);
-  const contextIds = normalizeContextIds(body.context_ids);
+  const seedConversation = normalizeConversation(body.seed?.conversation);
+  const seedContextIds = normalizeContextIds(body.seed?.context_ids);
   const threadId = normalizeThreadId(body.thread_id);
-  const turnIndex = normalizeTurnIndex(body.turn_index);
+  const testFailure = body.test_failure === "rerank_once" ? "rerank_once" as const : null;
+  const enableCheckpointReplay = body.enable_checkpoint_replay === true;
 
   if (query.length < 2) {
     return NextResponse.json({ error: "Query must be at least 2 characters." }, { status: 400 });
@@ -42,11 +44,14 @@ export async function POST(request: NextRequest) {
   if (query.length > 1_000) {
     return NextResponse.json({ error: "Query must be 1,000 characters or fewer." }, { status: 400 });
   }
-  if (conversation.length === 0) {
-    return NextResponse.json({ error: "The experimental graph is only available for follow-up questions." }, { status: 400 });
-  }
 
   const env = getServerEnv();
+  if (testFailure && !env.langGraphTestMode) {
+    return NextResponse.json({ error: "LangGraph failure injection is disabled." }, { status: 403 });
+  }
+  if (enableCheckpointReplay && !env.langGraphTestMode) {
+    return NextResponse.json({ error: "LangGraph checkpoint replay is disabled outside explicit test mode." }, { status: 403 });
+  }
   const hasOpenai = Boolean(env.openaiApiKey);
   const hasOpenRouter = Boolean(env.openRouterApiKey);
   const provider: AnswerProvider = requestedProvider
@@ -66,27 +71,47 @@ export async function POST(request: NextRequest) {
     retrieval: "auto",
     metadata: {
       engine: "langgraph",
-      conversation_turns: conversation.length,
-      retained_context_sources: contextIds.length,
-      experiment_turn: turnIndex,
+      state_source: "postgres_checkpoint",
+      seeded_conversation_turns: seedConversation.length,
+      seeded_context_sources: seedContextIds.length,
     },
   });
 
   const startedAt = performance.now();
+  let replayAccessToken: string | null = null;
   try {
-    const result = await runExperimentalFollowUp({ query, provider, conversation, contextIds });
+    if (enableCheckpointReplay) {
+      const existingCheckpoints = await listExperimentalFollowUpCheckpoints(threadId, 1);
+      if (existingCheckpoints.length > 0) {
+        return NextResponse.json({ error: "Replay authorization can only be created with a new test thread." }, { status: 409 });
+      }
+      const replayAuthorization = await registerReplayThread({
+        threadId,
+        kind: "original",
+        testConfig: { failure: testFailure, mode: "checkpoint_replay" },
+      });
+      replayAccessToken = replayAuthorization.accessToken;
+    }
+    const result = await runExperimentalFollowUp({
+      threadId,
+      query,
+      provider,
+      seedConversation,
+      seedContextIds,
+      testFailure,
+    });
     const totalMs = Math.round(performance.now() - startedAt);
     if (!result.answer || !result.provider || result.sources.length === 0) {
       await logFollowUpExperiment({
         threadId,
-        turnIndex,
+        turnIndex: Math.max(1, result.turnIndex),
         query,
         requestedProvider: provider,
         relationship: result.relationship,
         retrieval: result.retrieval,
         sourceCount: result.sources.length,
-        conversationTurns: conversation.length,
-        retainedContextSources: contextIds.length,
+        conversationTurns: result.conversationTurns,
+        retainedContextSources: result.contextIds.length,
         durationMs: totalMs,
         trace: result.trace,
         success: false,
@@ -95,10 +120,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No sources found to answer from." }, { status: 404 });
     }
 
-    const response: RagExperimentalFollowUpResponse = {
+    const response: RagExperimentalFollowUpResponse & {
+      checkpoint_replay?: { access_token: string; thread_kind: "original" };
+    } = {
       query,
       engine: "langgraph",
       thread_id: threadId,
+      turn_index: result.turnIndex,
       relationship: result.relationship,
       provider: result.provider,
       model: result.model,
@@ -110,11 +138,14 @@ export async function POST(request: NextRequest) {
       answer: result.answer,
       trace: result.trace,
       total_ms: totalMs,
+      ...(replayAccessToken ? {
+        checkpoint_replay: { access_token: replayAccessToken, thread_kind: "original" as const },
+      } : {}),
     };
 
     await logFollowUpExperiment({
       threadId,
-      turnIndex,
+      turnIndex: result.turnIndex,
       query,
       requestedProvider: provider,
       actualProvider: result.provider,
@@ -122,12 +153,12 @@ export async function POST(request: NextRequest) {
       relationship: result.relationship,
       retrieval: result.retrieval,
       sourceCount: result.sources.length,
-      conversationTurns: conversation.length,
-      retainedContextSources: contextIds.length,
+      conversationTurns: result.conversationTurns,
+      retainedContextSources: result.contextIds.length,
       durationMs: totalMs,
       trace: result.trace,
       success: true,
-      metadata: { reranked: result.reranked },
+      metadata: { reranked: result.reranked, persisted: true },
     });
 
     return NextResponse.json(response);
@@ -135,19 +166,24 @@ export async function POST(request: NextRequest) {
     const totalMs = Math.round(performance.now() - startedAt);
     await logFollowUpExperiment({
       threadId,
-      turnIndex,
+      turnIndex: 1,
       query,
       requestedProvider: provider,
-      conversationTurns: conversation.length,
-      retainedContextSources: contextIds.length,
+      conversationTurns: seedConversation.length,
+      retainedContextSources: seedContextIds.length,
       durationMs: totalMs,
       success: false,
       errorCode: "graph_error",
     });
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 },
-    );
+    const message = error instanceof Error ? error.message : "Unknown error";
+    const recoverable = message.includes("LANGGRAPH_TEST_FAILURE");
+    return NextResponse.json({
+      error: message,
+      thread_id: threadId,
+      recoverable,
+      ...(replayAccessToken ? {
+        checkpoint_replay: { access_token: replayAccessToken, thread_kind: "original" as const },
+      } : {}),
+    }, { status: recoverable ? 503 : 500 });
   }
 }
-

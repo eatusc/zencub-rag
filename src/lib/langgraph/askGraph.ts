@@ -11,7 +11,7 @@ import {
   filterDegenerate,
   rrfFuse,
 } from "@/lib/ragRetrieval";
-import { coerceAnswer, formatRagSource, type RagSource } from "@/lib/ragUtils";
+import { coerceAnswer, formatRagSource, hydrateAnswerCitations, type RagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
 import { refineResultTimestamps } from "@/lib/timestampRefinement";
 import type { RagAnswer, RagGraphTraceEntry, RagSearchResult } from "@/lib/types";
@@ -41,8 +41,12 @@ const ANSWER_SYSTEM = [
   "Do not invent techniques, videos, timestamps, or claims.",
   "Each source may include technique, position, difficulty, and gi_nogi tags; use them to frame the answer accurately.",
   "If evidence is weak, say so in caveats.",
+  "Write a concise but complete answer for a mobile app, usually 80-140 words.",
+  "Lead with the direct answer, then include essential setup, sequence, and a key failure point when the sources support them.",
+  "Use short paragraphs and omit filler, repetition, and background that does not help the user apply the answer.",
   "Return valid JSON only with keys: answer, citations, key_takeaways, follow_up_searches, caveats.",
-  "citations must be copied from provided sources and include title, citation, start_seconds, end_seconds, watch_url.",
+  "Include no more than 3 key_takeaways and 3 follow_up_searches; do not repeat the answer in key_takeaways.",
+  "citations must be an array containing 1-3 source id numbers copied from the provided sources, for example [1, 2].",
   "If any source supports the answer, include at least one citation.",
   "Prefer citing 2 or more distinct videos when multiple sources support the answer, rather than repeating one video at different timestamps.",
   "Use short paragraphs and practical jiu-jitsu language.",
@@ -268,7 +272,7 @@ async function generateNode(state: State): Promise<Partial<State>> {
     { response_format: { type: "json_object" } },
   );
 
-  const answer = coerceAnswer(safeParse(messageText(response as AIMessageChunk)));
+  const answer = hydrateAnswerCitations(coerceAnswer(safeParse(messageText(response as AIMessageChunk))), state.sources);
   return { answer, trace: [trace("generate", "Generate", `cited answer from ${state.sources.length} sources (${env.ragAnswerModel})`, startedAt)] };
 }
 

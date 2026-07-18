@@ -14,7 +14,7 @@ export type ProviderInfo = {
 };
 
 export const PROVIDER_META: Record<AnswerProvider, { label: string; blurb: string }> = {
-  qwen: { label: "Qwen", blurb: "Local model on this machine (Ollama). Private, no API cost." },
+  qwen: { label: "Local Qwen", blurb: "Local model on this machine (Ollama). Private, no API cost." },
   openrouter: { label: "Qwen3 235B", blurb: "Qwen3 235B A22B served through OpenRouter." },
   claude: { label: "Claude", blurb: "Answered by the Claude Code CLI on this machine." },
   openai: { label: "OpenAI", blurb: "OpenAI API (default when no local model is available)." },

@@ -3,6 +3,9 @@ type ServerEnv = {
   supabaseServiceRoleKey: string;
   openaiApiKey?: string;
   openRouterApiKey?: string;
+  langGraphDatabaseUrl?: string;
+  langGraphCheckpointSchema: string;
+  langGraphTestMode: boolean;
   ragAnalyzeModel: string;
   ragAnswerModel: string;
   ragEmbeddingModel: string;
@@ -33,6 +36,9 @@ export function getServerEnv(): ServerEnv {
     supabaseServiceRoleKey,
     openaiApiKey: process.env.OPENAI_API_KEY,
     openRouterApiKey: process.env.OPENROUTER_API_KEY,
+    langGraphDatabaseUrl: process.env.LANGGRAPH_DATABASE_URL,
+    langGraphCheckpointSchema: process.env.LANGGRAPH_CHECKPOINT_SCHEMA ?? "langgraph",
+    langGraphTestMode: process.env.LANGGRAPH_TEST_MODE === "on",
     ragAnalyzeModel: process.env.RAG_ANALYZE_MODEL ?? "gpt-4o-mini",
     ragAnswerModel: process.env.RAG_ANSWER_MODEL ?? "gpt-4o-mini",
     ragEmbeddingModel: process.env.RAG_EMBEDDING_MODEL ?? "text-embedding-3-small",

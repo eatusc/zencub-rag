@@ -4,7 +4,7 @@
 import { execFile } from "node:child_process";
 import OpenAI from "openai";
 import type { getServerEnv } from "@/lib/env";
-import { asNumber, type RagSource } from "@/lib/ragUtils";
+import { coerceAnswer, hydrateAnswerCitations, type RagSource } from "@/lib/ragUtils";
 import {
   ANSWER_PROVIDERS,
   PROVIDER_META,
@@ -15,6 +15,11 @@ import type { RagAnswer, RagConversationTurn, RagTokenUsage } from "@/lib/types"
 
 type ServerEnv = ReturnType<typeof getServerEnv>;
 type GeneratedAnswer = { answer: RagAnswer; usage: RagTokenUsage | null };
+export type StructuredGeneration = {
+  value: unknown;
+  usage: RagTokenUsage | null;
+  model: string;
+};
 
 function tokenCount(value: unknown): number {
   const count = typeof value === "number" ? value : Number(value);
@@ -30,40 +35,6 @@ function tokenUsage(prompt: unknown, completion: unknown, total?: unknown): RagT
     : null;
 }
 
-export function coerceAnswer(value: unknown): RagAnswer {
-  const fallback: RagAnswer = {
-    answer: "No answer returned.",
-    citations: [],
-    key_takeaways: [],
-    follow_up_searches: [],
-    suggested_follow_up: null,
-    caveats: ["The model did not return the expected JSON shape."],
-  };
-
-  if (!value || typeof value !== "object") return fallback;
-  const raw = value as Record<string, unknown>;
-
-  return {
-    answer: typeof raw.answer === "string" ? raw.answer : fallback.answer,
-    citations: Array.isArray(raw.citations) ? raw.citations.slice(0, 8).map((citation) => {
-      const item = citation && typeof citation === "object" ? citation as Record<string, unknown> : {};
-      return {
-        title: typeof item.title === "string" ? item.title : "Untitled source",
-        citation: typeof item.citation === "string" ? item.citation : "No citation",
-        start_seconds: asNumber(item.start_seconds as number | string | null | undefined),
-        end_seconds: asNumber(item.end_seconds as number | string | null | undefined),
-        watch_url: typeof item.watch_url === "string" ? item.watch_url : null,
-      };
-    }) : [],
-    key_takeaways: Array.isArray(raw.key_takeaways) ? raw.key_takeaways.filter((item): item is string => typeof item === "string").slice(0, 8) : [],
-    follow_up_searches: Array.isArray(raw.follow_up_searches) ? raw.follow_up_searches.filter((item): item is string => typeof item === "string").slice(0, 6) : [],
-    suggested_follow_up: typeof raw.suggested_follow_up === "string" && raw.suggested_follow_up.trim()
-      ? raw.suggested_follow_up.trim().slice(0, 240)
-      : null,
-    caveats: Array.isArray(raw.caveats) ? raw.caveats.filter((item): item is string => typeof item === "string").slice(0, 4) : [],
-  };
-}
-
 const SYSTEM_PROMPT = [
   "You are a concise BJJ research assistant.",
   "Answer only from the provided transcript chunks.",
@@ -72,10 +43,15 @@ const SYSTEM_PROMPT = [
   "If evidence is weak, say so in caveats.",
   "When conversation history is provided, answer the latest question in light of it without needlessly repeating the earlier answer.",
   "Prior assistant answers are conversation context, not evidence; the provided transcript sources remain the only source of truth.",
+  "Write a concise but complete answer for a mobile app, usually 80-140 words.",
+  "Lead with the direct answer, then include essential setup, sequence, and a key failure point when the sources support them.",
+  "Use short paragraphs and omit filler, repetition, and background that does not help the user apply the answer.",
   "Return valid JSON only with keys: answer, citations, key_takeaways, follow_up_searches, suggested_follow_up, caveats.",
   "key_takeaways, follow_up_searches, and caveats must each be JSON arrays of strings, even when empty; never return a single string for these fields.",
+  "Include no more than 3 key_takeaways. Each must add a useful detail instead of repeating the answer.",
+  "Include no more than 3 follow_up_searches.",
   "suggested_follow_up must be one natural, specific question that a jiu-jitsu student could ask next based on this answer.",
-  "citations must be copied from provided sources and include title, citation, start_seconds, end_seconds, watch_url.",
+  "citations must be an array containing 1-3 source id numbers copied from the provided sources, for example [1, 2].",
   "If any source supports the answer, include at least one citation.",
   "Prefer citing 2 or more distinct videos when multiple sources support the answer, rather than repeating one video at different timestamps.",
   "Use short paragraphs and practical jiu-jitsu language.",
@@ -108,6 +84,50 @@ function extractJson(text: string): unknown {
   }
 }
 
+function openAICompatibleClient(provider: AnswerProvider, env: ServerEnv, openaiClient?: OpenAI | null): OpenAI {
+  if (provider === "qwen") return new OpenAI({ baseURL: env.ragQwenBaseUrl, apiKey: "ollama" });
+  if (provider === "openrouter") {
+    return new OpenAI({
+      baseURL: env.ragOpenRouterBaseUrl,
+      apiKey: env.openRouterApiKey,
+      defaultHeaders: {
+        "HTTP-Referer": "https://github.com/eatusc/zencub-rag",
+        "X-Title": "ZenCub RAG",
+      },
+    });
+  }
+  return openaiClient ?? new OpenAI({ apiKey: env.openaiApiKey });
+}
+
+export async function generateStructuredJson(
+  provider: Exclude<AnswerProvider, "claude">,
+  systemPrompt: string,
+  input: unknown,
+  env: ServerEnv,
+  options?: { openaiClient?: OpenAI | null; temperature?: number },
+): Promise<StructuredGeneration> {
+  const model = providerModel(provider, env);
+  const client = openAICompatibleClient(provider, env, options?.openaiClient);
+  const completion = await client.chat.completions.create({
+    model,
+    temperature: options?.temperature ?? 0,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: JSON.stringify(input) },
+    ],
+  });
+  return {
+    value: extractJson(completion.choices[0]?.message.content ?? "{}"),
+    usage: tokenUsage(
+      completion.usage?.prompt_tokens,
+      completion.usage?.completion_tokens,
+      completion.usage?.total_tokens,
+    ),
+    model,
+  };
+}
+
 async function generateViaOpenAICompatible(
   query: string,
   sources: RagSource[],
@@ -126,7 +146,7 @@ async function generateViaOpenAICompatible(
   });
   const content = completion.choices[0]?.message.content ?? "{}";
   return {
-    answer: coerceAnswer(extractJson(content)),
+    answer: hydrateAnswerCitations(coerceAnswer(extractJson(content)), sources),
     usage: tokenUsage(
       completion.usage?.prompt_tokens,
       completion.usage?.completion_tokens,
@@ -183,7 +203,7 @@ async function generateViaClaude(
     userContent(query, sources, conversation),
   ].join("\n");
   const result = await runClaude(prompt, env);
-  return { answer: coerceAnswer(extractJson(result.text)), usage: result.usage };
+  return { answer: hydrateAnswerCitations(coerceAnswer(extractJson(result.text)), sources), usage: result.usage };
 }
 
 // `openaiClient` is the client the route already built for embeddings/rerank;
@@ -200,18 +220,11 @@ export async function generateAnswer(
     return generateViaClaude(query, sources, env, conversation);
   }
   if (provider === "qwen") {
-    const client = new OpenAI({ baseURL: env.ragQwenBaseUrl, apiKey: "ollama" });
+    const client = openAICompatibleClient(provider, env);
     return generateViaOpenAICompatible(query, sources, client, env.ragQwenModel, conversation);
   }
   if (provider === "openrouter") {
-    const client = new OpenAI({
-      baseURL: env.ragOpenRouterBaseUrl,
-      apiKey: env.openRouterApiKey,
-      defaultHeaders: {
-        "HTTP-Referer": "https://github.com/eatusc/zencub-rag",
-        "X-Title": "ZenCub RAG",
-      },
-    });
+    const client = openAICompatibleClient(provider, env);
     return generateViaOpenAICompatible(query, sources, client, env.ragOpenRouterModel, conversation);
   }
   const client = openaiClient ?? new OpenAI({ apiKey: env.openaiApiKey });

@@ -18,7 +18,7 @@ type ServerEnv = ReturnType<typeof getServerEnv>;
 
 export const RESULT_LIMIT = 8;
 export type RequestedRetrieval = "text" | "vector" | "auto";
-export type RetrievalMode = "vector" | "text" | "hybrid";
+export type RetrievalMode = "vector" | "text" | "metadata" | "hybrid";
 
 export function normalizeConversation(value: unknown): RagConversationTurn[] {
   if (!Array.isArray(value)) return [];
@@ -46,7 +46,7 @@ export function uniqueRows(rows: RagSearchResult[]): RagSearchResult[] {
   });
 }
 
-async function vectorResults(query: string, limit: number, openai: OpenAI | null, env: ServerEnv) {
+export async function vectorResults(query: string, limit: number, openai: OpenAI | null, env: ServerEnv) {
   if (!openai) return [];
   const embedding = await openai.embeddings.create({
     model: env.ragEmbeddingModel,
@@ -68,7 +68,7 @@ async function vectorResults(query: string, limit: number, openai: OpenAI | null
   }));
 }
 
-async function textResults(query: string, limit: number) {
+export async function textResults(query: string, limit: number) {
   const supabase = createServerSupabase();
   const { data, error } = await supabase.rpc("search_rag_transcript_chunks", {
     query_text: query,
@@ -76,6 +76,84 @@ async function textResults(query: string, limit: number) {
   });
   if (error) throw new Error(error.message);
   return (data ?? []) as RagSearchResult[];
+}
+
+const METADATA_STOP_WORDS = new Set([
+  "about", "after", "again", "from", "have", "into", "their", "then", "they", "this", "what", "when", "where", "with", "your",
+  "how", "the", "and", "for", "that", "you", "can", "stop", "help",
+]);
+
+type TechniqueSearchRow = {
+  video_id: string;
+  technique_name: string | null;
+  canonical_position: string | null;
+  position: string | null;
+  type: string | null;
+  gi_nogi: string | null;
+  start_seconds: number | null;
+  end_seconds: number | null;
+};
+
+function metadataTerms(query: string): string[] {
+  return [...new Set(
+    (query.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+      .filter((term) => term.length >= 3 && !METADATA_STOP_WORDS.has(term)),
+  )].slice(0, 5);
+}
+
+function techniqueScore(row: TechniqueSearchRow, terms: string[]): number {
+  const searchable = [row.technique_name, row.canonical_position, row.position, row.type, row.gi_nogi]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return terms.reduce((score, term) => score + (searchable.includes(term) ? 1 : 0), 0);
+}
+
+/**
+ * Metadata retrieval searches structured technique/position labels first, then
+ * maps matching technique time ranges back to transcript chunks. Terms are
+ * restricted to ASCII alphanumerics before being inserted into PostgREST's OR
+ * filter, so arbitrary user syntax never reaches the filter expression.
+ */
+export async function metadataResults(query: string, limit: number): Promise<RagSearchResult[]> {
+  const terms = metadataTerms(query);
+  if (terms.length === 0) return [];
+
+  const fields = ["technique_name", "canonical_position", "position", "type", "gi_nogi"];
+  const orFilter = terms.flatMap((term) => fields.map((field) => `${field}.ilike.%${term}%`)).join(",");
+  const supabase = createServerSupabase();
+  const { data: techniqueData, error: techniqueError } = await supabase
+    .from("rag_techniques")
+    .select("video_id,technique_name,canonical_position,position,type,gi_nogi,start_seconds,end_seconds")
+    .or(orFilter)
+    .limit(Math.max(limit * 3, 30));
+  if (techniqueError) throw new Error(techniqueError.message);
+
+  const techniques = (techniqueData ?? []) as TechniqueSearchRow[];
+  const videoIds = [...new Set(techniques.map((row) => row.video_id))];
+  if (videoIds.length === 0) return [];
+
+  const { data: chunkData, error: chunkError } = await supabase
+    .from("rag_transcript_chunks")
+    .select("id,video_id,chunk_index,start_seconds,end_seconds,text,metadata")
+    .in("video_id", videoIds)
+    .limit(Math.max(limit * 8, 80));
+  if (chunkError) throw new Error(chunkError.message);
+
+  const ranked = ((chunkData ?? []) as Omit<RagSearchResult, "rank">[]).flatMap((chunk) => {
+    const chunkStart = Number(chunk.start_seconds) || 0;
+    const chunkEnd = Number(chunk.end_seconds) || chunkStart;
+    const matching = techniques.filter((technique) => {
+      if (technique.video_id !== chunk.video_id) return false;
+      const start = Number(technique.start_seconds) || 0;
+      const end = Number(technique.end_seconds) || start;
+      return Math.max(start, chunkStart) <= Math.min(end, chunkEnd);
+    });
+    const score = matching.reduce((best, technique) => Math.max(best, techniqueScore(technique, terms)), 0);
+    return score > 0 ? [{ ...chunk, rank: score }] : [];
+  });
+
+  return uniqueRows(ranked.sort((a, b) => b.rank - a.rank)).slice(0, limit);
 }
 
 export async function contextResults(ids: string[]): Promise<RagSearchResult[]> {
@@ -144,4 +222,3 @@ export async function enrichCandidates(
   const sources = enriched.map(({ row, technique }, index) => formatRagSource(row, index, technique));
   return { top, sources };
 }
-

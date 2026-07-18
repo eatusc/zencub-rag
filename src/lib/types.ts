@@ -54,9 +54,11 @@ export type RagAnalyzeResponse = {
 export type RagAnswerCitation = {
   title: string;
   citation: string;
+  channel: string | null;
   start_seconds: number;
   end_seconds: number;
   watch_url: string | null;
+  thumbnail_url: string | null;
 };
 
 export type RagAnswer = {
@@ -83,7 +85,7 @@ export type RagAskResponse = {
   query: string;
   provider: import("@/lib/providers").AnswerProvider;
   model: string;
-  retrieval: "vector" | "text" | "hybrid";
+  retrieval: "vector" | "text" | "metadata" | "hybrid";
   reranked?: boolean;
   source_count: number;
   context_ids: string[];
@@ -115,7 +117,75 @@ export type RagGraphAskResponse = {
 export type RagExperimentalFollowUpResponse = RagAskResponse & {
   engine: "langgraph";
   thread_id: string;
+  turn_index: number;
   relationship: "same_topic" | "new_topic";
   trace: RagGraphTraceEntry[];
+  total_ms: number;
+};
+
+export type RagComparisonClaim = {
+  summary: string;
+  citations: RagAnswerCitation[];
+};
+
+export type RagInstructorAnalysis = {
+  creator_slug: string;
+  creator_name: string;
+  attribution_confidence: number;
+  approach_summary: string;
+  key_details: string[];
+  best_for: string[];
+  limitations: string[];
+  citations: RagAnswerCitation[];
+};
+
+export type RagInstructorDifference = {
+  subject: string;
+  explanation: string;
+  instructor_names: string[];
+  citations: RagAnswerCitation[];
+};
+
+export type RagInstructorCompareResponse = {
+  query: string;
+  engine: "langgraph";
+  thread_id: string;
+  provider: import("@/lib/providers").AnswerProvider;
+  model: string;
+  models: {
+    semantic_embedding: string | null;
+    evidence_reranker: string | null;
+    instructor_analysis: string;
+    synthesis: string;
+  };
+  zero_paid_model_mode: boolean;
+  usage: RagTokenUsage & {
+    reported_calls: number;
+    model_calls: Array<RagTokenUsage & {
+      stage: "evidence_rerank" | "instructor_analysis" | "synthesis";
+      provider: import("@/lib/providers").AnswerProvider;
+      model: string;
+      ms: number;
+    }>;
+  };
+  rerank_applied: boolean;
+  retrieval: "vector" | "text" | "metadata" | "hybrid";
+  instructor_count: number;
+  evidence_count: number;
+  attribution: {
+    retrieved_candidates: number;
+    attributed_candidates: number;
+    minimum_confidence: number;
+  };
+  comparison: {
+    topic: string;
+    shared_principles: RagComparisonClaim[];
+    instructors: RagInstructorAnalysis[];
+    important_differences: RagInstructorDifference[];
+    decision_guide: string[];
+    caveats: string[];
+  };
+  trace: RagGraphTraceEntry[];
+  checkpoint_count: number;
   total_ms: number;
 };

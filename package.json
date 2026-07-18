@@ -28,17 +28,25 @@
     "lint": "tsc --noEmit",
     "eval:queries": "node --experimental-strip-types scripts/evaluate-rag-examples.ts",
     "eval:openrouter": "node --experimental-strip-types scripts/evaluate-openrouter-rag.ts",
-    "embed:chunks": "node --experimental-strip-types scripts/embed-rag-chunks.ts"
+    "embed:chunks": "node --experimental-strip-types scripts/embed-rag-chunks.ts",
+    "langgraph:setup": "node --experimental-strip-types scripts/setup-langgraph-checkpointer.ts",
+    "test:langgraph-thread": "node --experimental-strip-types scripts/test-langgraph-thread.ts",
+    "test:langgraph-approval": "node --experimental-strip-types scripts/test-langgraph-approval.ts",
+    "test:langgraph-recovery": "node --experimental-strip-types scripts/test-langgraph-recovery.ts",
+    "test:langgraph-replay": "node --experimental-strip-types scripts/test-langgraph-replay.ts",
+    "test:instructor-compare": "node --experimental-strip-types scripts/test-instructor-compare.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.2.2",
     "@langchain/langgraph": "^1.4.7",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
     "@langchain/openai": "^1.5.5",
     "@supabase/supabase-js": "^2.103.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",
     "next": "^16.2.10",
     "openai": "^6.34.0",
+    "pg": "^8.22.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "tailwind-merge": "^3.6.0"
@@ -46,6 +54,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4.3.2",

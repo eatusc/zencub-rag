@@ -10,7 +10,7 @@ export type FollowUpExperimentLog = {
   actualProvider?: AnswerProvider;
   model?: string;
   relationship?: "same_topic" | "new_topic";
-  retrieval?: "text" | "vector" | "hybrid";
+  retrieval?: "text" | "vector" | "metadata" | "hybrid";
   sourceCount?: number;
   conversationTurns: number;
   retainedContextSources: number;
