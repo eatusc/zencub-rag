@@ -14,6 +14,7 @@ import {
 import { coerceAnswer, formatRagSource, hydrateAnswerCitations, type RagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
 import { refineResultTimestamps } from "@/lib/timestampRefinement";
+import { langfuseCallbacks } from "@/lib/langfuseHandler";
 import type { RagAnswer, RagGraphTraceEntry, RagSearchResult } from "@/lib/types";
 
 // This module is the LangGraph twin of src/app/api/rag/ask/route.ts. It runs the
@@ -315,7 +316,7 @@ export type AskGraphResult = {
 
 export async function runAskGraph(query: string, requestedRetrieval: RequestedRetrieval): Promise<AskGraphResult> {
   const env = getServerEnv();
-  const final = await getGraph().invoke({ query, requestedRetrieval });
+  const final = await getGraph().invoke({ query, requestedRetrieval }, { callbacks: langfuseCallbacks() });
   return {
     retrieval: final.retrieval,
     reranked: env.ragRerankEnabled,

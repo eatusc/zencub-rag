@@ -146,10 +146,58 @@ export type RagInstructorDifference = {
   citations: RagAnswerCitation[];
 };
 
+export type RagInstructorEvidenceClip = {
+  id: number;
+  creator_slug: string;
+  creator_name: string;
+  title: string;
+  citation: string;
+  start_seconds: number;
+  end_seconds: number;
+  watch_url: string | null;
+};
+
+export type RagInstructorPanelProposal = {
+  kind: "instructor_panel_review";
+  thread_id: string;
+  query: string;
+  refinement_round: number;
+  instructors: Array<{
+    creator_slug: string;
+    creator_name: string;
+    attribution_confidence: number;
+    clips: RagInstructorEvidenceClip[];
+  }>;
+};
+
+export type RagInstructorPanelDecision =
+  | { action: "approve" }
+  | { action: "reject" }
+  | { action: "edit"; excluded_clip_ids: number[] };
+
+export type RagComparisonQuality = {
+  passed: boolean;
+  score: number;
+  refinement_rounds: number;
+  max_refinement_rounds: number;
+  gaps: string[];
+};
+
+export type RagClaimVerification = {
+  claim_type: "shared_principle" | "difference";
+  claim_index: number;
+  summary: string;
+  passed: boolean;
+  instructor_count: number;
+  citation_count: number;
+  reason: string;
+};
+
 export type RagInstructorCompareResponse = {
   query: string;
   engine: "langgraph";
   thread_id: string;
+  session_token?: string;
   provider: import("@/lib/providers").AnswerProvider;
   model: string;
   models: {
@@ -157,12 +205,13 @@ export type RagInstructorCompareResponse = {
     evidence_reranker: string | null;
     instructor_analysis: string;
     synthesis: string;
+    claim_verifier: string;
   };
   zero_paid_model_mode: boolean;
   usage: RagTokenUsage & {
     reported_calls: number;
     model_calls: Array<RagTokenUsage & {
-      stage: "evidence_rerank" | "instructor_analysis" | "synthesis";
+      stage: "evidence_rerank" | "instructor_analysis" | "synthesis" | "claim_verification" | "targeted_retrieval";
       provider: import("@/lib/providers").AnswerProvider;
       model: string;
       ms: number;
@@ -185,7 +234,30 @@ export type RagInstructorCompareResponse = {
     decision_guide: string[];
     caveats: string[];
   };
+  session: {
+    turn_index: number;
+    relationship: "initial" | "follow_up";
+    reused_evidence_count: number;
+    parent_thread_id: string | null;
+  };
+  quality: RagComparisonQuality;
+  claim_verifications: RagClaimVerification[];
   trace: RagGraphTraceEntry[];
   checkpoint_count: number;
   total_ms: number;
+};
+
+export type RagInstructorComparePausedResponse = {
+  status: "paused";
+  engine: "langgraph";
+  thread_id: string;
+  session_token: string;
+  proposal: RagInstructorPanelProposal;
+  trace: RagGraphTraceEntry[];
+  checkpoint_count: number;
+};
+
+export type RagStoredInstructorCompareRun = RagInstructorCompareResponse & {
+  stored_run_id: string;
+  stored_at: string;
 };

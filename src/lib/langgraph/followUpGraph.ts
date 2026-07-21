@@ -8,6 +8,7 @@ import type { AnswerProvider } from "@/lib/providers";
 import { enrichCandidates, type RetrievalMode } from "@/lib/ragPipeline";
 import { runRetrievalSubgraph } from "@/lib/langgraph/retrievalSubgraph";
 import { getLangGraphCheckpointer } from "@/lib/langgraph/checkpointer";
+import { langfuseCallbacks } from "@/lib/langfuseHandler";
 import type { RagSource } from "@/lib/ragUtils";
 import type {
   RagAnswer,
@@ -398,13 +399,14 @@ export async function runExperimentalFollowUp(input: {
     seedContextIds: input.seedContextIds ?? [],
     testFailure: input.testFailure ?? null,
     testThreadId: input.threadId,
-  }, { configurable: { thread_id: input.threadId } });
+  }, { configurable: { thread_id: input.threadId }, callbacks: langfuseCallbacks() });
   return resultFromState(final);
 }
 
 export async function resumeExperimentalFollowUp(threadId: string): Promise<ExperimentalFollowUpResult> {
   const final = await getFollowUpGraph().invoke(null as never, {
     configurable: { thread_id: threadId },
+    callbacks: langfuseCallbacks(),
   });
   return resultFromState(final);
 }
@@ -509,7 +511,7 @@ export async function replayExperimentalFollowUp(input: {
     testFailure: input.testFailure ?? null,
     testThreadId: input.branchThreadId,
   });
-  const final = await graph.invoke(null as never, forkConfig);
+  const final = await graph.invoke(null as never, { ...forkConfig, callbacks: langfuseCallbacks() });
   return {
     result: resultFromState(final),
     forkCheckpointId: checkpointId(forkConfig) ?? "",

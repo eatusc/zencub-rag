@@ -25,7 +25,8 @@ It reads a read-only Supabase dataset of transcript data and never writes back t
 - Home-page `Lang Tests` tab runs the live Classic-versus-LangGraph baseline and lays out acceptance tests for persistence, subgraphs, interrupts, recovery, LangSmith evaluation, and the write-to-vault security workflow
 - Checkpointed human approval for research-note writes plus deterministic reranker failure/recovery tests
 - Capability-authorized checkpoint timelines and separate-thread replay branches for local/test time-travel experiments
-- A top-level `Instructor Compare` experience that defaults to Qwen3 235B for the stronger observed results, retains free Local Qwen and GPT-4o Mini choices, reports exact models/tokens/timing, and runs grounded per-instructor LangGraph branches
+- A top-level `Instructor Compare` experience with adaptive evidence retrieval, human panel approval, parallel instructor and claim-verifier branches, persistent follow-ups, selective recovery, checkpoint-based model experiments, and a live visual state-machine explanation
+- Durable, server-only Instructor Compare history with filtering, run-type labels, and a complete visual result modal after browser/server restarts
 
 ## Local Setup
 
@@ -68,6 +69,10 @@ For persistent LangGraph conversations, run `docs/migrations/2026-07-17-langgrap
 Run `docs/migrations/2026-07-17-langgraph-approval-recovery.sql` for the server-only `rag_research_notes` and `rag_langgraph_test_events` tables. In explicit test mode, the Lang Tests tab can then pause proposed notes for approve/edit/reject and exercise checkpoint recovery. Both write/recovery APIs return 403 while `LANGGRAPH_TEST_MODE=off`; keep it off outside an intentional local test environment.
 
 Run `docs/migrations/2026-07-17-langgraph-checkpoint-replay.sql` for the server-only replay authorization registry. In explicit test mode, a newly created thread may receive a random replay capability; only its hash is persisted. The checkpoint API requires that capability, never enumerates threads, redacts private state, and creates every replay as a separate thread. Browser roles have no table access.
+
+Run `docs/migrations/2026-07-17-instructor-compare-history.sql` to persist completed Instructor Compare results. The bottom of that tab can then filter and reopen full historical comparisons, including model/token/timing data, citations, quality signals, caveats, and graph traces. Only the already-redacted API response is stored; private retrieval pools remain excluded and browser roles have no direct table access.
+
+Then run `docs/migrations/2026-07-17-instructor-compare-workflows.sql` for multi-turn result indexing and the server-only branch idempotency cache. Guided comparison capabilities are signed server-side and authorize one exact thread; they do not expose the signing credential or permit thread enumeration.
 
 Test a real process restart with `npm run test:langgraph-thread -- seed`, restart the server, then run the resume command printed by the script. See [`docs/LANGGRAPH_TEST_PLAN.md`](docs/LANGGRAPH_TEST_PLAN.md) for the complete acceptance tests.
 
@@ -163,6 +168,8 @@ Tables used:
 - `rag_research_notes` (approved LangGraph notes)
 - `rag_langgraph_test_events` (test-mode recovery counters)
 - `rag_langgraph_replay_threads` (test-only capability hashes and branch provenance)
+- `rag_instructor_compare_runs` (server-only safe comparison results for quality review)
+- `rag_instructor_compare_branch_cache` (server-only successful branch outputs for selective recovery)
 
 Current dataset:
 
@@ -183,7 +190,7 @@ The home page has five tabs:
   - `Ask a follow-up`: defaults to the proven Classic path. An explicit `LangGraph · Experimental` toggle runs a separate workflow that decides whether the user continued or changed topics, chooses whether to retain earlier sources, and validates returned citations.
 - `System Map`: visual explanation of the RAG data flow, table roles, current state, and next steps.
 - `In App Experience`: answer-first presentation using the same server-side providers.
-- `Instructor Compare`: guided multi-instructor research with parallel LangGraph analysis branches, grounded consensus/differences, timestamped evidence, default Qwen3 235B, selectable free Local Qwen/GPT-4o Mini, and real model/timing/token telemetry.
+- `Instructor Compare`: guided multi-instructor research that visibly loops on weak evidence, pauses for clip review, fans out instructor and claim checks, resumes follow-ups, selectively recovers failures, and branches controlled model experiments without changing the original thread.
 - `Lang Tests`: live Classic/LangGraph comparisons, approval and recovery labs, and an authorized checkpoint timeline/replay control that labels original and branch threads separately.
 
 Good test queries in the current text-search build:

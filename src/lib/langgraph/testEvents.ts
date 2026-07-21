@@ -1,6 +1,6 @@
 import { createServerSupabase } from "@/lib/supabase";
 
-export type RecoveryNode = "vector" | "keyword" | "metadata" | "context" | "fuse" | "rerank";
+export type RecoveryNode = "vector" | "keyword" | "metadata" | "context" | "fuse" | "rerank" | `compare_instructor:${string}`;
 
 export async function logRecoveryExecution(threadId: string, node: RecoveryNode): Promise<void> {
   const supabase = createServerSupabase();

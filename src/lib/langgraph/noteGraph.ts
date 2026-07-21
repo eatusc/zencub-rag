@@ -1,5 +1,6 @@
 import { Annotation, Command, END, START, StateGraph, interrupt } from "@langchain/langgraph";
 import { getLangGraphCheckpointer } from "@/lib/langgraph/checkpointer";
+import { langfuseCallbacks } from "@/lib/langfuseHandler";
 import { createServerSupabase } from "@/lib/supabase";
 
 export type NoteReviewDecision =
@@ -107,12 +108,12 @@ export async function startNoteReview(input: {
     threadId: input.threadId,
     title: input.title,
     content: input.content,
-  }, config(input.noteKey));
+  }, { ...config(input.noteKey), callbacks: langfuseCallbacks() });
   return { result, proposal: proposalFrom(result) };
 }
 
 export async function resumeNoteReview(noteKey: string, decision: NoteReviewDecision) {
-  const result = await getNoteGraph().invoke(new Command({ resume: decision }), config(noteKey));
+  const result = await getNoteGraph().invoke(new Command({ resume: decision }), { ...config(noteKey), callbacks: langfuseCallbacks() });
   return {
     status: result.status,
     noteId: result.savedNoteId,

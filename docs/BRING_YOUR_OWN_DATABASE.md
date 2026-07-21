@@ -140,6 +140,8 @@ docs/migrations/2026-07-15-followup-experiments.sql
 docs/migrations/2026-07-17-langgraph-persistence.sql
 docs/migrations/2026-07-17-langgraph-approval-recovery.sql
 docs/migrations/2026-07-17-langgraph-checkpoint-replay.sql
+docs/migrations/2026-07-17-instructor-compare-history.sql
+docs/migrations/2026-07-17-instructor-compare-workflows.sql
 ```
 
 Then initialize the LangGraph checkpointer:
@@ -166,6 +168,7 @@ Then run:
 npm run typecheck
 npm run eval:queries
 npm run test:instructor-compare
+npm run test:instructor-compare-workflow
 ```
 
 The bundled query evaluator is BJJ-specific and will fail against a different

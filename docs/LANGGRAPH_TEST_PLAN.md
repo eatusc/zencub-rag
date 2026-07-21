@@ -12,6 +12,7 @@ The repository already has:
 - shared retrieval primitives, so Classic and LangGraph use the same RRF, diversity, rerank, and enrichment behavior
 - query examples and deterministic retrieval checks in `src/lib/ragExamples.ts`
 - a production-shaped Instructor Compare graph that demonstrates private parallel retrieval, dynamic `Send` fan-out, branch convergence, canonical attribution, citation validation, checkpoints, and provider/timing/token comparisons against real BJJ evidence. It defaults to Qwen3 235B and permits explicit zero-paid Local Qwen or GPT-4o Mini runs.
+- a guided Instructor Compare state machine that conditionally loops through targeted retrieval, pauses for evidence-panel review, independently verifies synthesized claims, continues multi-turn research on the same thread, recovers only missing model branches, and clones approved-panel checkpoints for controlled provider experiments.
 
 The follow-up graph now compiles with `PostgresSaver` and invokes with `thread_id` in `configurable`. The browser seeds the pre-graph answer/context once, then sends only the durable cursor, query, and provider. The retrieval stage is a private-state subgraph with parallel vector, keyword, metadata, and prior-context branches.
 
@@ -157,6 +158,10 @@ Run `npm run test:langgraph-replay` with the local test-mode server. It asserts 
 Use `src/lib/ragExamples.ts` as the seed dataset. Add expected source terms, minimum citation count, safety labels, and scenario metadata. Keep poisoned-document and prompt-injection cases in a separate dataset split so they can be run more often during security work.
 
 Add instructor-comparison cases that deterministically grade distinct canonical people, minimum attribution confidence, one citation per instructor, at least two instructor identities behind every retained consensus/difference claim, private-state redaction, dynamic branch count, and checkpoint creation.
+
+Completed Instructor Compare runs are also persisted as immutable, already-redacted API results in `rag_instructor_compare_runs`. History tests must confirm the exact thread/result can be reloaded, quality metrics and citations survive serialization, private candidate keys remain absent, and browser roles cannot read the table directly.
+
+Run `npm run test:instructor-compare-workflow`. It must reach a real `interrupt()` before instructor model calls, reject an invalid capability, resume the same thread, stay within the configured refinement bound, execute one verifier branch per proposed cross-instructor claim, remove failed claims, and store the completed turn. Manual TEST integration also covers a second turn with prior evidence reuse, an original-preserving provider branch from the approved-panel checkpoint, and deterministic failure recovery where the failed instructor executes twice while its successful sibling executes once.
 
 Record Instructor Compare provider/model identity, per-stage and total latency, and provider-reported prompt/completion tokens as deterministic experiment metadata. Keep Local Qwen as the zero-paid baseline and compare it with Qwen3 235B and GPT-4o Mini. Treat output usefulness/groundedness as quality measurements, while noting that Local Qwen intentionally uses a keyword+metadata retrieval ablation because paid semantic embeddings are disabled.
 

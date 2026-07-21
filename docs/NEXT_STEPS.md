@@ -7,7 +7,7 @@ Completed:
 3. Interrupt-backed research-note review with approve, edit, reject, idempotent `rag_research_notes` writes, and restart-safe resume.
 4. Authorized one-time reranker failure injection with same-thread recovery and database execution counters proving completed retrieval work is not repeated.
 5. Capability-authorized checkpoint timelines and separate-thread replay branches that preserve the original trajectory and reuse successful checkpoint state.
-6. Guided Instructor Compare workflow with canonical-person attribution, private parallel retrieval, dynamic per-instructor branches, cross-instructor synthesis, citation validation, durable checkpoints, default Qwen3 235B execution, selectable zero-paid Local Qwen/GPT-4o Mini, and per-call timing/token telemetry.
+6. Guided Instructor Compare workflow with a bounded evidence-repair loop, checkpointed human panel approval/edit/reject, dynamic per-instructor and per-claim verifier branches, same-thread follow-ups with evidence reuse, selective branch recovery, checkpoint-cloned model experiments, capability-scoped mutation controls, per-turn timing/tokens, and durable server-only quality history.
 
 Next:
 

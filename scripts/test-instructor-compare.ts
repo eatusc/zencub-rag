@@ -40,6 +40,7 @@ if (!payload.usage || payload.usage.reported_calls < 4 || payload.usage.total_to
 if (!payload.usage.model_calls.every((call: Record<string, unknown>) => call.provider === provider && Number(call.total_tokens) > 0 && Number(call.ms) >= 0)) {
   throw new Error("Per-stage provider, duration, or token telemetry is incomplete.");
 }
+if (!payload.stored_run_id || !payload.stored_at) throw new Error("Successful comparison was not durably stored.");
 if (payload.attribution?.attributed_candidates < 3 || payload.attribution?.minimum_confidence !== 0.7) {
   throw new Error("Canonical attribution evidence is incomplete.");
 }
@@ -57,10 +58,19 @@ function containsPrivateKey(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsPrivateKey);
   if (!value || typeof value !== "object") return false;
   return Object.entries(value as Record<string, unknown>).some(([key, nested]) =>
-    ["vector", "keyword", "metadata", "candidates", "attributedCandidates", "groups", "activeGroup"].includes(key)
+    ["vector", "keyword", "metadata", "candidates", "attributedCandidates", "groups", "activeGroup", "session_token"].includes(key)
       || containsPrivateKey(nested));
 }
 if (containsPrivateKey(payload)) throw new Error("Private graph candidate state leaked into the API response.");
+
+const historyResponse = await fetch(`${baseUrl}/api/rag/instructor-compare?limit=100`, { cache: "no-store" });
+const history = await historyResponse.json() as Record<string, any>;
+if (!historyResponse.ok) throw new Error(history.error ?? "Stored comparison history could not be loaded.");
+const stored = (history.runs ?? []).find((run: Record<string, unknown>) => run.stored_run_id === payload.stored_run_id);
+if (!stored || stored.thread_id !== payload.thread_id || stored.comparison?.topic !== payload.comparison.topic) {
+  throw new Error("The exact completed comparison was not returned by durable history.");
+}
+if (containsPrivateKey(stored)) throw new Error("Private candidate state leaked into stored comparison history.");
 
 const invalid = await fetch(`${baseUrl}/api/rag/instructor-compare`, {
   method: "POST",
@@ -94,6 +104,9 @@ console.log(JSON.stringify({
   total_ms: payload.total_ms,
   usage: payload.usage,
   zero_paid_model_mode: payload.zero_paid_model_mode,
+  stored_run_id: payload.stored_run_id,
+  stored_at: payload.stored_at,
+  stored_history_total: history.total,
   trace_nodes: traceNodes,
   private_state_exposed: false,
   invalid_query_status: invalid.status,

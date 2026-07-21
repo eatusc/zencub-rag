@@ -108,15 +108,25 @@ comparison question
        technique data ─┘
   -> canonical person attribution (confidence >= 0.7)
   -> relevance ranking + instructor-diverse panel
+  -> deterministic evidence gate --weak--> targeted retrieval --┐
+       ^---------------------------------------------------------┘
+  -> interrupt: human approves/removes clips/rejects
   -> dynamic Send fan-out
        instructor A analysis ─┐
-       instructor B analysis ─┼─ synthesis -> citation validation
+       instructor B analysis ─┼─ synthesis -> per-claim verifier fan-out
        instructor C analysis ─┘
+  -> deterministic quality gate -> durable turn
+       ├─ same-thread follow-up reuses the approved panel
+       └─ model experiment clones the approved-panel checkpoint
 ```
 
 `*` Instructor Compare defaults to Qwen3 235B after it produced stronger validated comparison coverage in the initial live test. The optional Local Qwen mode disables the OpenAI query-embedding branch, leaving keyword and technique metadata active so the entire run has zero paid model calls. Qwen3 235B and GPT-4o Mini enable the semantic branch when OpenAI embeddings are configured. Analysis, synthesis, and any invoked evidence reranker use the selected provider. Every structured generation call records its exact provider/model, elapsed milliseconds, and provider-reported prompt/completion/total tokens; embedding tokens are not part of that generation total.
 
-`rag_video_attributions` links the internal `rag_videos.id` UUID to `rag_creators.slug`; transcript chunks use the external `rag_videos.video_id`, so attribution is performed through the video table. Only creator records whose effective kind is `person` are eligible. This prevents a channel or publisher from being displayed as an instructor. Panel construction also conservatively collapses obvious short/full first-name duplicates sharing a surname (for example Jon/Jonathan Thomas) when the canonical data contains two records. Each analysis branch receives only that instructor's selected evidence. Consensus and difference claims are removed unless their cited source IDs span at least two instructors. Private retrieval pools and graph state never appear in the API response.
+`rag_video_attributions` links the internal `rag_videos.id` UUID to `rag_creators.slug`; transcript chunks use the external `rag_videos.video_id`, so attribution is performed through the video table. Only creator records whose effective kind is `person` are eligible. This prevents a channel or publisher from being displayed as an instructor. Panel construction also conservatively collapses obvious short/full first-name duplicates sharing a surname (for example Jon/Jonathan Thomas) when the canonical data contains two records. Each analysis branch receives only that instructor's selected evidence. A bounded quality loop issues a gap-specific retrieval query when the panel lacks instructor/video coverage. Guided runs pause with `interrupt()` before analysis; a per-thread HMAC capability is required to approve, edit, reject, follow up, recover, or branch. Consensus and difference claims fan out to independent model verifiers and are removed unless both the verifier and deterministic two-instructor citation rules pass. Private retrieval pools, transcript text, graph state, and the server signing secret never appear in the API response.
+
+Follow-ups invoke the same terminal thread with a new question, retain the approved panel, merge distinct new evidence, and store a new turn. Experiments clone the latest approved-panel checkpoint into a separate UUID thread and change only the selected provider, preserving the original. Instructor branch outputs are cached in server-only `rag_instructor_compare_branch_cache`; after a failed parallel superstep, successful branches are reused and only the missing branch calls the model again.
+
+After validation, the route inserts that same safe API response into server-only `rag_instructor_compare_runs`. The history API selects only the stored result and its ID/timestamp; denormalized metrics support future evaluation queries without exposing private candidates. The Instructor Compare tab loads the newest 100 runs and can reopen the complete immutable result after a browser or server restart. Direct `anon` and `authenticated` table access is revoked.
 
 ## Visual Map In The App
 
@@ -179,6 +189,8 @@ ragExamples.ts
 | `rag_research_notes` | Server-only notes saved after explicit LangGraph approval |
 | `rag_langgraph_test_events` | Server-only deterministic failure/recovery execution counters |
 | `rag_langgraph_replay_threads` | Server-only replay capability hashes and original/branch provenance |
+| `rag_instructor_compare_runs` | Server-only redacted Instructor Compare outputs and quality-review metrics |
+| `rag_instructor_compare_branch_cache` | Server-only idempotency cache for selective instructor-branch recovery |
 
 ## Privacy Rule
 

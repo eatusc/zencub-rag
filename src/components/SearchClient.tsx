@@ -50,6 +50,7 @@ import {
 } from "@/lib/providers";
 import { timestampUrl } from "@/lib/ragUtils";
 import { LangTests } from "@/components/LangTests";
+import { LangfuseTab } from "@/components/LangfuseTab";
 import { InstructorCompare } from "@/components/InstructorCompare";
 
 function secondsLabel(value: number | string | null | undefined) {
@@ -79,7 +80,7 @@ function scoreFor(result: RagSearchResult) {
   return raw.toFixed(2);
 }
 
-type Tab = "search" | "app" | "compare" | "map" | "tests";
+type Tab = "search" | "app" | "compare" | "map" | "tests" | "langfuse";
 type Mode = "keyword" | "semantic";
 type FollowUpEngine = "classic" | "langgraph";
 type FollowUpResponse = RagAskResponse & {
@@ -184,6 +185,8 @@ const TABLE_ROWS: Array<{ table: string; count: string; type: "Core" | "Meta" | 
   { table: "rag_transcript_chunks", count: "12,104", type: "Vectors", desc: "Searchable timestamped chunks + embedding vectors." },
   { table: "rag_search_logs", count: "Live", type: "Logs", desc: "Every keyword, semantic, analysis, Ask AI, and follow-up query." },
   { table: "rag_followup_experiment_runs", count: "Ready", type: "Logs", desc: "Server-only LangGraph follow-up timing, routing, model, and outcome telemetry." },
+  { table: "rag_instructor_compare_runs", count: "Live", type: "Logs", desc: "Server-only safe comparison results, token/timing metrics, citations, and quality signals." },
+  { table: "rag_instructor_compare_branch_cache", count: "Live", type: "Logs", desc: "Server-only idempotency cache so checkpoint recovery reuses completed instructor branches." },
 ];
 
 const MODEL_USAGE_ROWS = [
@@ -195,6 +198,7 @@ const MODEL_USAGE_ROWS = [
   { action: "Ask AI · Claude selected", usesLlm: "Yes", local: "Final answer", openrouter: "No", openai: "Embedding + usually reranking" },
   { action: "Ask AI · OpenAI selected", usesLlm: "Yes", local: "No", openrouter: "No", openai: "Embedding + reranking + final answer" },
   { action: "Ask follow-up", usesLlm: "Yes", local: "Final answer when selected", openrouter: "Final answer when selected", openai: "Context retrieval + reranking; final answer when selected" },
+  { action: "Instructor Compare", usesLlm: "Yes · parallel branches", local: "Analysis + synthesis when selected", openrouter: "Analysis + synthesis by default", openai: "Embedding; analysis + synthesis when selected" },
   { action: "Page load", usesLlm: "No", local: "Availability probes only", openrouter: "Key check only", openai: "No model call" },
 ];
 
@@ -613,9 +617,10 @@ export function SearchClient() {
           <TabButton active={tab === "compare"} onClick={() => setTab("compare")} icon={Users} label="Instructor Compare" />
           <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={Workflow} label="System Map" />
           <TabButton active={tab === "tests"} onClick={() => setTab("tests")} icon={FlaskConical} label="Lang Tests" />
+          <TabButton active={tab === "langfuse"} onClick={() => setTab("langfuse")} icon={BarChart3} label="Langfuse" />
         </div>
 
-        {tab !== "map" && tab !== "tests" && tab !== "compare" ? (
+        {tab !== "map" && tab !== "tests" && tab !== "compare" && tab !== "langfuse" ? (
           <div className="space-y-4">
             {/* Search bar */}
             <form onSubmit={tab === "app" ? submitAsk : submit} className="flex items-center gap-3 px-4 sm:px-5 py-3 rounded-2xl bg-card border border-border shadow-sm">
@@ -1115,6 +1120,8 @@ export function SearchClient() {
           <InstructorCompare providers={providers} />
         ) : tab === "map" ? (
           <SystemMap onExample={useExample} />
+        ) : tab === "langfuse" ? (
+          <LangfuseTab />
         ) : (
           <LangTests />
         )}
@@ -1619,6 +1626,54 @@ function Banner({ tone, children }: { tone: "error"; children: React.ReactNode }
   );
 }
 
+function InstructorConsensusComparison() {
+  const branches = ["Instructor A clips", "Instructor B clips", "Instructor C clips"];
+  return (
+    <section className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+      <div className="max-w-3xl">
+        <p className="text-[11px] font-black uppercase tracking-widest text-muted-foreground">Instructor consensus</p>
+        <h2 className="mt-1 text-xl font-bold">One big prompt versus controlled independent analysis</h2>
+        <p className="mt-2 text-sm leading-relaxed text-foreground/65">
+          “Independent” means a separate call to the selected model for each instructor—not a human reviewer or a different hidden model. With the default setting, three isolated Qwen3 235B calls analyze A, B, and C; a later Qwen3 235B call receives only those completed analyses and proposes shared principles.
+        </p>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <article className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 sm:p-5">
+          <div className="flex items-center gap-2"><MessageSquare size={15} className="text-amber-700" /><h3 className="text-sm font-black">Normal one-shot LLM processing</h3></div>
+          <p className="mt-1 text-[10px] leading-relaxed text-amber-900/70">All evidence and the comparison request enter one model call together.</p>
+          <div className="mt-4 space-y-2">
+            <div className="grid grid-cols-3 gap-1.5">{branches.map((label) => <div key={label} className="rounded-lg border border-amber-200 bg-white px-2 py-2 text-center text-[9px] font-bold">{label}</div>)}</div>
+            <div className="flex justify-center text-amber-600"><ChevronDown size={15} /></div>
+            <div className="rounded-xl border-2 border-amber-300 bg-white p-3 text-center"><Cpu size={16} className="mx-auto text-amber-700" /><strong className="mt-1 block text-xs">One large LLM call</strong><span className="mt-1 block text-[9px] text-muted-foreground">read everything · compare · write consensus</span></div>
+            <div className="flex justify-center text-amber-600"><ChevronDown size={15} /></div>
+            <div className="rounded-lg border border-amber-200 bg-amber-100/60 p-2.5 text-center text-[10px] font-bold">Final answer immediately</div>
+          </div>
+          <ul className="mt-4 space-y-1.5 text-[10px] leading-relaxed text-amber-950/70"><li>· One instructor’s wording can influence another’s summary.</li><li>· A long transcript can dominate the comparison.</li><li>· The model can call something “agreement” before proving two instructors support it.</li></ul>
+        </article>
+
+        <article className="rounded-2xl border-2 border-violet-300 bg-violet-50/45 p-4 sm:p-5">
+          <div className="flex items-center gap-2"><Workflow size={15} className="text-violet-700" /><h3 className="text-sm font-black">This LangGraph instructor workflow</h3></div>
+          <p className="mt-1 text-[10px] leading-relaxed text-violet-900/70">Evidence is isolated first, then branches join only after every independent call finishes.</p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            {branches.map((label, index) => <div key={label} className="rounded-xl border border-violet-200 bg-white p-2.5 text-center"><span className="block text-[9px] font-black">{label}</span><ChevronDown size={12} className="mx-auto my-1 text-violet-500" /><Cpu size={13} className="mx-auto text-violet-700" /><span className="mt-1 block text-[8px] leading-tight text-muted-foreground">separate selected-model call #{index + 1}<br />sees only this instructor</span></div>)}
+          </div>
+          <div className="flex justify-center py-1 text-violet-600"><span className="text-[9px] font-black">branches join ↓</span></div>
+          <div className="rounded-xl border border-violet-300 bg-white p-3 text-center"><Sparkles size={15} className="mx-auto text-violet-700" /><strong className="mt-1 block text-xs">Propose shared principles</strong><span className="mt-1 block text-[9px] text-muted-foreground">one later selected-model synthesis call sees the independent analyses</span></div>
+          <div className="flex justify-center text-violet-600"><ChevronDown size={14} /></div>
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-center"><GitBranch size={14} className="mx-auto text-blue-700" /><strong className="mt-1 block text-[10px]">One independent verifier call per proposed claim</strong></div>
+          <div className="flex justify-center text-violet-600"><ChevronDown size={14} /></div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center"><CheckCircle2 size={14} className="mx-auto text-emerald-700" /><strong className="mt-1 block text-[10px]">Code checks citations span at least two instructors</strong><span className="mt-1 block text-[9px] text-muted-foreground">retain supported claim · remove unsupported claim</span></div>
+        </article>
+      </div>
+
+      <div className="rounded-xl border border-border bg-secondary/50 p-4 text-xs leading-relaxed text-foreground/70">
+        <strong className="text-foreground">What LangGraph contributes:</strong> it does not make Qwen inherently smarter. It enforces evidence isolation, parallel model-call boundaries, fan-in, verification branches, deterministic gates, checkpoints, and visible traces so a plausible consensus must survive a controlled process.
+      </div>
+    </section>
+  );
+}
+
 function SystemMap({ onExample }: { onExample: (q: string) => void }) {
   return (
     <div className="space-y-4">
@@ -1820,6 +1875,9 @@ function SystemMap({ onExample }: { onExample: (q: string) => void }) {
           </table>
         </div>
       </section>
+
+      {/* One-shot LLM versus the real Instructor Compare fan-out/fan-in. */}
+      <InstructorConsensusComparison />
     </div>
   );
 }
