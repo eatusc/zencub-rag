@@ -1,253 +1,112 @@
 # ZenCub RAG
 
-A LangGraph-powered Retrieval-Augmented Generation app that turns a BJJ (Brazilian Jiu-Jitsu) video-transcript library into a searchable, citation-backed research assistant. It combines persistent checkpointed workflows, parallel retrieval and instructor-analysis branches, human approval/recovery labs, hybrid keyword + semantic retrieval, and answers grounded in timestamped source clips.
+[![CI](https://github.com/eatusc/zencub-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/eatusc/zencub-rag/actions/workflows/ci.yml)
 
-It reads a read-only Supabase dataset of transcript data and never writes back to the source tables. All database access is server-side; secrets never reach the browser.
+ZenCub RAG answers questions about a BJJ (Brazilian Jiu-Jitsu) video library with citations back to the exact clips, built on LangGraph with persistent checkpointed workflows.
 
-## Screenshots
+![ZenCub RAG: LangGraph RAG over a BJJ video library](docs/media/social-preview.png)
+
+**Live demo: [zencub-rag.vercel.app](https://zencub-rag.vercel.app)**
+
+## Engineering highlights
+
+- Strict TypeScript with zero `any` across roughly 8,800 lines of application code; `tsc --noEmit` runs in CI.
+- LangGraph workflows on a Postgres checkpointer: `interrupt()`-based human approval gates, checkpoint cloning into separate branch threads for model experiments, and selective branch recovery backed by a server-only idempotency cache so only failed branches re-execute.
+- Capability tokens for checkpoint replay are stored only as SHA-256 hashes; the checkpoint API requires the capability, never enumerates threads, and redacts private state.
+- Committed retrieval eval reports in [docs/evals/](docs/evals/), currently 19/19 passing.
+
+## What it does
+
+- Hybrid retrieval over transcript chunks: Postgres full-text search plus pgvector semantic search, fused with Reciprocal Rank Fusion, with LLM reranking and per-video diversity caps (helpers in `src/lib/ragRetrieval.ts`)
+- Cited answers through `/api/rag/ask`, grounded in timestamped source clips and enriched with overlapping technique metadata
+- Opt-in LangGraph follow-ups that classify topic continuity, retrieve context, and validate citations
+- Instructor Compare (`/api/rag/instructor-compare`): parallel evidence retrieval, human panel approval, one independent analysis branch per instructor, cross-instructor synthesis, and per-claim citation verification, all on durable checkpoint threads
+- All database access is server-side against a read-only Supabase dataset; secrets never reach the browser
+
+The home page has six tabs:
+
+- `Search`: keyword and semantic search, result analysis, Ask with citations, and Classic or LangGraph follow-ups
+- `In App Experience`: answer-first presentation using the same server-side providers
+- `Instructor Compare`: guided multi-instructor research with evidence loops, clip review pauses, recovery, and model-experiment branches
+- `System Map`: visual explanation of the RAG data flow and table roles
+- `Lang Tests`: live Classic versus LangGraph comparisons, approval and recovery labs, and authorized checkpoint timeline/replay controls
+- `Langfuse`: recent LLM traces (latency, cost, LangGraph node tree) from a self-hosted Langfuse instance
 
 | Search | System Map |
 | --- | --- |
 | ![Search tab](docs/media/search.png) | ![System Map tab](docs/media/system-map.png) |
 
-> Add the two PNGs to `docs/media/` before publishing (run `npm run dev` and capture the Search and System Map tabs).
+## Setup
 
-## Current Scope
-
-- Hybrid retrieval over `rag_transcript_chunks`: keyword full-text search + semantic vector search fused with Reciprocal Rank Fusion
-- LLM reranking and per-video result diversity for higher-signal top results
-- Citation-oriented results using chunk metadata (title, channel, timestamp, source URL)
-- Server-side Supabase service-role access only
-- Full semantic-search coverage across the embedded transcript corpus
-- Generated cited answers through `/api/rag/ask`, enriched with overlapping technique metadata
-- Opt-in LangGraph follow-ups that classify topic continuity, retrieve context, and validate citations without replacing the classic path
-- Home-page `System Map` tab visualizes the pipeline, corpus coverage, and table roles
-- Home-page `Lang Tests` tab runs the live Classic-versus-LangGraph baseline and lays out acceptance tests for persistence, subgraphs, interrupts, recovery, LangSmith evaluation, and the write-to-vault security workflow
-- Checkpointed human approval for research-note writes plus deterministic reranker failure/recovery tests
-- Capability-authorized checkpoint timelines and separate-thread replay branches for local/test time-travel experiments
-- A top-level `Instructor Compare` experience with adaptive evidence retrieval, human panel approval, parallel instructor and claim-verifier branches, persistent follow-ups, selective recovery, checkpoint-based model experiments, and a live visual state-machine explanation
-- Durable, server-only Instructor Compare history with filtering, run-type labels, and a complete visual result modal after browser/server restarts
-
-## Local Setup
+Requires Node 22 or newer.
 
 ```bash
 npm install
-cp .env.example .env.local
+cp .env.example .env.local   # then fill in the values
 npm run dev
 ```
 
-To use your own data, follow [Bring Your Own Database](docs/BRING_YOUR_OWN_DATABASE.md). It includes a fresh Supabase bootstrap migration, required import order and JSON contracts, embedding backfill, RLS/security rules, and optional LangGraph setup. This repository does not include or copy the author's database contents.
+To use your own data, follow [Bring Your Own Database](docs/BRING_YOUR_OWN_DATABASE.md). It covers the fresh Supabase bootstrap migration, import order and JSON contracts, embedding backfill, and RLS rules. This repository does not include the author's database contents.
 
-Required env:
+### Environment variables
 
-```bash
-NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
-OPENAI_API_KEY=...
-OPENROUTER_API_KEY=...
-RAG_ANALYZE_MODEL=gpt-4o-mini
-RAG_ANSWER_MODEL=gpt-4o-mini
-RAG_EMBEDDING_MODEL=text-embedding-3-small
-RAG_RERANK_MODEL=gpt-4o-mini
-RAG_OPENROUTER_MODEL=qwen/qwen3-235b-a22b-2507
-RAG_RERANK=on
-RAG_TEST_PROJECT_REF=YOUR_PROJECT_REF
-LANGGRAPH_DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/postgres
-LANGGRAPH_CHECKPOINT_SCHEMA=langgraph
-LANGGRAPH_TEST_MODE=off
-```
+Every variable is documented in [.env.example](.env.example). Summary:
 
-The browser never receives the service-role or model-provider keys. API routes own all database and model access.
+| Variables | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Supabase access; the service-role key stays server-side |
+| `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | Model providers |
+| `RAG_ANALYZE_MODEL`, `RAG_ANSWER_MODEL`, `RAG_EMBEDDING_MODEL`, `RAG_RERANK_MODEL`, `RAG_RERANK` | Analysis, answer, embedding, and reranking models |
+| `RAG_OPENROUTER_MODEL`, `RAG_OPENROUTER_BASE_URL` | OpenRouter model and endpoint |
+| `RAG_QWEN_BASE_URL`, `RAG_QWEN_MODEL` | Local model served through an OpenAI-compatible endpoint (for example Ollama) |
+| `RAG_CLAUDE_BIN`, `RAG_CLAUDE_MODEL` | Optional local Claude Code CLI provider |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASEURL` | Optional Langfuse tracing; tracing is skipped when unset |
+| `LANGGRAPH_DATABASE_URL`, `LANGGRAPH_CHECKPOINT_SCHEMA`, `LANGGRAPH_TEST_MODE` | LangGraph persistence; the URL must be a direct Postgres/pooler connection, not the Supabase HTTP URL |
+| `RAG_TEST_PROJECT_REF` | Safety guard: `embed:chunks` refuses to write unless the Supabase host matches |
 
-Run `docs/migrations/2026-07-14-search-logging.sql` once in the Supabase SQL editor to create the server-only search history table. After that, keyword searches, semantic searches, analyses, Ask AI questions, and conversational follow-ups are logged automatically.
+API routes own all database and model access; the browser never receives service-role or model-provider keys.
 
-Run `docs/migrations/2026-07-15-followup-experiments.sql` once to create the optional, server-only `rag_followup_experiment_runs` table. The experimental follow-up still works before the migration is installed; only its evaluation telemetry is skipped.
+### Database migrations
 
-For persistent LangGraph conversations, run `docs/migrations/2026-07-17-langgraph-persistence.sql`, then `npm run langgraph:setup` once. `LANGGRAPH_DATABASE_URL` must be a direct Postgres/pooler connection, not the Supabase HTTP URL. The first graph follow-up seeds existing answer context once; later turns send only `thread_id`, query, and provider.
+Run the files in [docs/migrations/](docs/migrations/) in the Supabase SQL editor, in this order:
 
-Run `docs/migrations/2026-07-17-langgraph-approval-recovery.sql` for the server-only `rag_research_notes` and `rag_langgraph_test_events` tables. In explicit test mode, the Lang Tests tab can then pause proposed notes for approve/edit/reject and exercise checkpoint recovery. Both write/recovery APIs return 403 while `LANGGRAPH_TEST_MODE=off`; keep it off outside an intentional local test environment.
+| # | Migration | Purpose |
+| --- | --- | --- |
+| 1 | `2026-07-17-rag-core-bootstrap.sql` | Fresh core schema (bring-your-own-database setups only) |
+| 2 | `2026-07-07-hybrid-rrf-index-cleanup.sql` | Database-side retrieval upgrades for hybrid search |
+| 3 | `2026-07-14-search-logging.sql` | Server-only search history logging |
+| 4 | `2026-07-15-followup-experiments.sql` | Optional LangGraph follow-up telemetry |
+| 5 | `2026-07-17-langgraph-persistence.sql` | LangGraph checkpoint namespace; then run `npm run langgraph:setup` once |
+| 6 | `2026-07-17-langgraph-approval-recovery.sql` | Approval notes and recovery-test tables (test mode) |
+| 7 | `2026-07-17-langgraph-checkpoint-replay.sql` | Replay capability registry (token hashes only) |
+| 8 | `2026-07-17-instructor-compare-history.sql` | Durable Instructor Compare result history |
+| 9 | `2026-07-17-instructor-compare-workflows.sql` | Multi-turn indexing and the branch idempotency cache |
 
-Run `docs/migrations/2026-07-17-langgraph-checkpoint-replay.sql` for the server-only replay authorization registry. In explicit test mode, a newly created thread may receive a random replay capability; only its hash is persisted. The checkpoint API requires that capability, never enumerates threads, redacts private state, and creates every replay as a separate thread. Browser roles have no table access.
+The write/recovery/replay APIs return 403 while `LANGGRAPH_TEST_MODE=off`; keep it off outside an intentional local test environment.
 
-Run `docs/migrations/2026-07-17-instructor-compare-history.sql` to persist completed Instructor Compare results. The bottom of that tab can then filter and reopen full historical comparisons, including model/token/timing data, citations, quality signals, caveats, and graph traces. Only the already-redacted API response is stored; private retrieval pools remain excluded and browser roles have no direct table access.
-
-Then run `docs/migrations/2026-07-17-instructor-compare-workflows.sql` for multi-turn result indexing and the server-only branch idempotency cache. Guided comparison capabilities are signed server-side and authorize one exact thread; they do not expose the signing credential or permit thread enumeration.
-
-Test a real process restart with `npm run test:langgraph-thread -- seed`, restart the server, then run the resume command printed by the script. See [`docs/LANGGRAPH_TEST_PLAN.md`](docs/LANGGRAPH_TEST_PLAN.md) for the complete acceptance tests.
-
-The integration scripts target `http://localhost:3000` by default. Set `RAG_BASE_URL` when the app runs on another port, for example `RAG_BASE_URL=http://localhost:3100 npm run test:instructor-compare`.
-
-## How The Technology Works
-
-RAG means Retrieval-Augmented Generation:
-
-```text
-retrieve relevant source evidence -> add it to the prompt -> generate an answer grounded in that evidence
-```
-
-One-sentence explanation:
-
-```text
-ZenCub RAG is a BJJ transcript research system that searches a BJJ video knowledge base and answers questions using cited clips instead of generic model memory.
-```
-
-The app has three working layers right now:
-
-```text
-Browser UI
-  -> /api/rag/search
-    -> Supabase RPC: search_rag_transcript_chunks
-      -> table: rag_transcript_chunks
-        -> cited transcript results
-```
-
-That is the broad text-retrieval baseline. It finds source chunks and shows evidence.
-
-Semantic search adds this layer:
-
-```text
-User question
-  -> embed question
-    -> vector search matching embedded transcript chunks
-      -> meaning-matched transcript chunks
-```
-
-Answer generation adds this layer:
-
-```text
-User question
-  -> retrieve source chunks
-    -> send chunks to LLM
-      -> answer with citations
-```
-
-Instructor comparison adds a multi-branch research workflow:
-
-```text
-situational question
-  -> semantic + keyword + technique retrieval in parallel
-    -> canonical person attribution
-      -> instructor-diverse panel
-        -> one independent analysis branch per instructor
-          -> cross-instructor synthesis
-            -> multi-instructor citation validation
-```
-
-The comparison route is `POST /api/rag/instructor-compare`. It uses only high-confidence `instructor` attributions whose canonical `rag_creators` kind is `person`; channels and publishers are not presented as instructors. The current TEST snapshot contains 1,044 videos attributed to 263 canonical people. Each run receives a new checkpoint thread and the UI exposes the graph trace, branch fan-out, checkpoint count, evidence coverage, consensus, differences, and decision guide.
-
-Instructor Compare defaults to OpenRouter `qwen/qwen3-235b-a22b-2507`, which produced stronger validated comparison coverage than the local model in the initial live test. The selector also permits OpenAI `gpt-4o-mini` and local `qwen3.6:35b-mlx`. Local zero-paid mode deliberately disables OpenAI query embeddings and uses parallel Postgres keyword plus technique-metadata retrieval; analysis, optional reranking, and synthesis all use the local model. Remote modes enable semantic retrieval when `OPENAI_API_KEY` is available. Results report prompt, completion, and total generation tokens per model call, per-stage latency, total elapsed time, and an in-browser recent-run comparison. Embedding-token usage is not included in generation-token totals.
-
-The important separation:
-
-- `rag_` source tables hold the BJJ video-transcript corpus.
-- `rag_transcript_chunks` holds searchable evidence chunks with timestamps.
-- `embedding` holds vector representations; 12,104 chunks are embedded; the transcript corpus has full vector coverage.
-- API routes own all database access so secrets stay server-side.
-- `rag_search_logs` stores every user-triggered query and action type; browser clients cannot access it directly.
-- `rag_followup_experiment_runs` stores only experimental LangGraph run metadata, timing, routing, and node traces; it is also server-only.
-- `rag_research_notes` stores only notes that passed the LangGraph approval interrupt; `rag_langgraph_test_events` stores local recovery-test counters. Both are server-only and protected by RLS.
-- `/api/rag/analyze` reruns the current search, sends the top chunks to a small/fast model, and returns a structured watch plan.
-- `/api/rag/vector-search` embeds the query and calls `match_rag_transcript_chunks`.
-- `/api/rag/ask` fuses vector + text retrieval with Reciprocal Rank Fusion, caps sources per video, reranks by intent, enriches with technique metadata, and returns a cited answer. Retrieval helpers live in `src/lib/ragRetrieval.ts`.
-
-## Data Source
-
-Supabase project: `YOUR_PROJECT_REF` (set via `NEXT_PUBLIC_SUPABASE_URL`)
-
-Tables used:
-
-- `rag_videos`
-- `rag_video_transcripts`
-- `rag_techniques`
-- `rag_video_attributions`
-- `rag_creators`
-- `rag_transcript_chunks`
-- `rag_search_logs`
-- `rag_followup_experiment_runs` (optional experimental telemetry)
-- `rag_research_notes` (approved LangGraph notes)
-- `rag_langgraph_test_events` (test-mode recovery counters)
-- `rag_langgraph_replay_threads` (test-only capability hashes and branch provenance)
-- `rag_instructor_compare_runs` (server-only safe comparison results for quality review)
-- `rag_instructor_compare_branch_cache` (server-only successful branch outputs for selective recovery)
-
-Current dataset:
-
-- `2,402` videos
-- `2,298` transcripts
-- `2,844` techniques
-- `12,104` transcript chunks
-- `12,104` embedded chunks
-
-## Interface
-
-The home page has five tabs:
-
-- `Search`: live text search over transcript chunks. This tab also holds three buttons:
-  - `Analyze Results`: shown after a search; summarizes the best watch moments and study takeaways from the current results.
-  - `Semantic Search`: embeds the query and searches the embedded chunks by meaning.
-  - `Ask`: generates an answer using retrieved chunks and citations.
-  - `Ask a follow-up`: defaults to the proven Classic path. An explicit `LangGraph · Experimental` toggle runs a separate workflow that decides whether the user continued or changed topics, chooses whether to retain earlier sources, and validates returned citations.
-- `System Map`: visual explanation of the RAG data flow, table roles, current state, and next steps.
-- `In App Experience`: answer-first presentation using the same server-side providers.
-- `Instructor Compare`: guided multi-instructor research that visibly loops on weak evidence, pauses for clip review, fans out instructor and claim checks, resumes follow-ups, selectively recovers failures, and branches controlled model experiments without changing the original thread.
-- `Lang Tests`: live Classic/LangGraph comparisons, approval and recovery labs, and an authorized checkpoint timeline/replay control that labels original and branch threads separately.
-
-Good test queries in the current text-search build:
-
-- `knee cut`
-- `saddle`
-- `crossface`
-- `underhook half guard`
-- `guard retention`
-- `heel hook escape`
-- `single leg x`
-- `kimura trap`
-- `body lock pass`
-- `deep half`
-- `rear naked choke`
-- `armbar`
-- `triangle choke`
-- `arm triangle`
-- `ankle lock`
-- `heel hook`
-- `mount escape`
-- `closed guard pass`
-- `bow and arrow choke`
-- `omoplata`
-
-These are not just examples in the UI. They are evaluated through the live API:
+## Testing and evals
 
 ```bash
+npm run typecheck   # strict TypeScript
+npm run lint        # ESLint
+npm test            # vitest unit tests for the retrieval helpers
 npm run eval:queries
 ```
 
-The evaluator calls `/api/rag/search`, checks that each query returns enough results, verifies expected BJJ terms appear in the retrieved evidence, and confirms top results include citations, timestamps, and source URLs.
+`eval:queries` runs 20 BJJ queries (listed in [docs/TEST_QUERIES.md](docs/TEST_QUERIES.md)) through the live `/api/rag/search` API and checks result counts, expected terms, citations, and source URLs. The latest committed report is [docs/evals/rag-search-eval.md](docs/evals/rag-search-eval.md).
 
-Latest generated report:
+LangGraph acceptance tests (persistence across restarts, approval, recovery, replay, instructor compare) are described in [docs/LANGGRAPH_TEST_PLAN.md](docs/LANGGRAPH_TEST_PLAN.md) and run through the `npm run test:langgraph-*` and `npm run test:instructor-compare` scripts against a local dev server. The integration scripts target `http://localhost:3000` by default; set `RAG_BASE_URL` to point elsewhere.
 
-```text
-docs/evals/rag-search-eval.md
-```
+`npm run embed:chunks -- --limit=2048` backfills embeddings (dry-run by default; add `--apply` to write).
 
-## Commands
+## More documentation
 
-```bash
-npm run typecheck
-npm run build
-npm run eval:queries
-npm run embed:chunks -- --limit=2048
-npm run embed:chunks -- --limit=2048 --apply
-npm run dev -- --port 3021
-npm run test:langgraph-thread -- seed
-npm run test:langgraph-approval -- approve
-npm run test:langgraph-recovery
-npm run test:langgraph-replay
-npm run test:instructor-compare
-```
-
-`embed:chunks` defaults to dry-run. Use `--apply` to write vectors. Use `--all --apply` only when you intentionally want to backfill every missing chunk in TEST. `embed:chunks` requires `RAG_TEST_PROJECT_REF` to match the target Supabase host as a safety guard against writing to the wrong project.
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- How the RAG pipeline works: [docs/RAG_TECHNOLOGY.md](docs/RAG_TECHNOLOGY.md)
+- Bring your own database: [docs/BRING_YOUR_OWN_DATABASE.md](docs/BRING_YOUR_OWN_DATABASE.md)
+- LangGraph test plan: [docs/LANGGRAPH_TEST_PLAN.md](docs/LANGGRAPH_TEST_PLAN.md)
+- Development log: [docs/DEVLOG.md](docs/DEVLOG.md)
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
