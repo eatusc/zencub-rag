@@ -67,6 +67,7 @@ export async function GET() {
   const pk = process.env.LANGFUSE_PUBLIC_KEY;
   const sk = process.env.LANGFUSE_SECRET_KEY;
   const base = process.env.LANGFUSE_BASEURL;
+  const publicBase = process.env.LANGFUSE_PUBLIC_URL ?? base;
   if (!pk || !sk || !base) return NextResponse.json({ configured: false, traces: [] });
 
   const auth = "Basic " + Buffer.from(`${pk}:${sk}`).toString("base64");
@@ -106,7 +107,7 @@ export async function GET() {
       }),
     );
 
-    return NextResponse.json({ configured: true, projectId: process.env.LANGFUSE_PROJECT ?? "zencub-rag", baseUrl: base, traces });
+    return NextResponse.json({ configured: true, projectId: process.env.LANGFUSE_PROJECT ?? "zencub-rag", baseUrl: publicBase, traces });
   } catch (e) {
     return NextResponse.json({ configured: true, error: e instanceof Error ? e.message : String(e), traces: [] });
   }
