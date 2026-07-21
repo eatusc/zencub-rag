@@ -30,6 +30,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
+    "test": "vitest run",
     "eval:queries": "node --experimental-strip-types scripts/evaluate-rag-examples.ts",
     "eval:openrouter": "node --experimental-strip-types scripts/evaluate-openrouter-rag.ts",
     "embed:chunks": "node --experimental-strip-types scripts/embed-rag-chunks.ts",
@@ -67,7 +68,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4.3.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "postcss": "8.5.10"
