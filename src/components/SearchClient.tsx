@@ -1254,7 +1254,6 @@ function VideoReferences({
               {citation.thumbnail_url && (
                 // Plain img supports the corpus' mixed thumbnail hosts without
                 // widening Next Image's remote-host allowlist.
-                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={citation.thumbnail_url}
                   alt=""
@@ -1620,7 +1619,7 @@ function FlowCap({ label, tone }: { label: string; tone: "start" | "end" }) {
   );
 }
 
-function Banner({ tone, children }: { tone: "error"; children: React.ReactNode }) {
+function Banner({ children }: { tone: "error"; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm px-4 py-3">{children}</div>
   );
