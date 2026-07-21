@@ -18,3 +18,10 @@ LOCAL.md
 
 # Eval report dumps: contain verbatim third-party transcripts + project refs. Keep local, do not commit.
 docs/evals/*.json
+
+# ── Env files: never commit secrets ─────────────────────────────────────────
+# Covers .env, .env.local, .env.production, and any suffixed copy
+# (.env.local.bak, .env.local.from-lappy, ...). Templates stay tracked.
+.env
+.env.*
+!.env.example
