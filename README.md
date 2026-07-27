@@ -61,6 +61,7 @@ Every variable is documented in [.env.example](.env.example). Summary:
 | `RAG_QWEN_BASE_URL`, `RAG_QWEN_MODEL` | Local model served through an OpenAI-compatible endpoint (for example Ollama) |
 | `RAG_CLAUDE_BIN`, `RAG_CLAUDE_MODEL` | Optional local Claude Code CLI provider |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASEURL` | Optional Langfuse tracing; tracing is skipped when unset |
+| `LANGFUSE_PUBLIC_URL`, `LANGFUSE_PROJECT` | Optional: browser-clickable trace-link host (when it differs from `LANGFUSE_BASEURL`) and the project label in the Langfuse tab |
 | `LANGGRAPH_DATABASE_URL`, `LANGGRAPH_CHECKPOINT_SCHEMA`, `LANGGRAPH_TEST_MODE` | LangGraph persistence; the URL must be a direct Postgres/pooler connection, not the Supabase HTTP URL |
 | `RAG_TEST_PROJECT_REF` | Safety guard: `embed:chunks` refuses to write unless the Supabase host matches |
 
