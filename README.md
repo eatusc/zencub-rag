@@ -6,7 +6,11 @@ ZenCub RAG answers questions about a BJJ (Brazilian Jiu-Jitsu) video library wit
 
 ![ZenCub RAG: LangGraph RAG over a BJJ video library](docs/media/social-preview.png)
 
-**Live demo: [zencub-rag.vercel.app](https://zencub-rag.vercel.app)**
+**Live: [search.zencub.com](https://search.zencub.com)** is the public transcript
+search surface (full-text, semantic, and cited answers). The full engineering
+demo with the LangGraph workflows, Instructor Compare, and Langfuse traces runs
+at [demo.zencub.com](https://demo.zencub.com) behind a PIN. Both are served from
+one codebase; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Engineering highlights
 
@@ -19,6 +23,7 @@ ZenCub RAG answers questions about a BJJ (Brazilian Jiu-Jitsu) video library wit
 
 - Hybrid retrieval over transcript chunks: Postgres full-text search plus pgvector semantic search, fused with Reciprocal Rank Fusion, with LLM reranking and per-video diversity caps (helpers in `src/lib/ragRetrieval.ts`)
 - Cited answers through `/api/rag/ask`, grounded in timestamped source clips and enriched with overlapping technique metadata
+- Threaded follow-ups that carry the conversation plus the previous answer's top clips forward as `context_ids`, so a follow-up stays anchored to the instructional the reader is already watching while still retrieving fresh material for the new question
 - Opt-in LangGraph follow-ups that classify topic continuity, retrieve context, and validate citations
 - Instructor Compare (`/api/rag/instructor-compare`): parallel evidence retrieval, human panel approval, one independent analysis branch per instructor, cross-instructor synthesis, and per-claim citation verification, all on durable checkpoint threads
 - All database access is server-side against a read-only Supabase dataset; secrets never reach the browser
@@ -103,6 +108,7 @@ LangGraph acceptance tests (persistence across restarts, approval, recovery, rep
 ## More documentation
 
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Deployment (public search host and PIN-gated demo host): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - How the RAG pipeline works: [docs/RAG_TECHNOLOGY.md](docs/RAG_TECHNOLOGY.md)
 - Bring your own database: [docs/BRING_YOUR_OWN_DATABASE.md](docs/BRING_YOUR_OWN_DATABASE.md)
 - LangGraph test plan: [docs/LANGGRAPH_TEST_PLAN.md](docs/LANGGRAPH_TEST_PLAN.md)

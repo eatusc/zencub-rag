@@ -19,6 +19,50 @@
   --font-sans: var(--font-space), var(--font-inter), ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  /* ── ZenCub brand tokens ────────────────────────────────────────────────
+     Copied from zencub.com (~/code/zencub/src/app/globals.css) so the public
+     search host matches the marketing site. Deliberately namespaced under
+     zc-* rather than reusing the token names above: the internal demo surface
+     keeps its own light theme, and the two must not collide. */
+  --color-zc-base: #1a1917;
+  --color-zc-surface: #242220;
+  --color-zc-surface-deep: #1f1e1c;
+  --color-zc-gold: #c4a882;
+  --color-zc-text-primary: #e8e0d4;
+  --color-zc-text-body: #c9c1b5;
+  --color-zc-text-secondary: #a09888;
+  --color-zc-text-dim: #918b83;
+  --color-zc-border: #2c2a27;
+  --color-zc-border-subtle: #333029;
+  --color-zc-error: #ee6b6a;
+
+  --font-zc: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Applied to <body> only on the public host (APP_MODE=public), so the dark
+   brand theme never leaks into the internal demo surface. */
+.zc-theme {
+  background: #1a1917;
+  color: #e8e0d4;
+  font-family: var(--font-zc);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.zc-theme :focus-visible {
+  outline: 2px solid #c4a882;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.zc-theme input::placeholder {
+  color: #918b83;
+}
+
+.zc-theme input {
+  caret-color: #c4a882;
 }
 
 /* Light theme, matching the redesign preview screenshots:

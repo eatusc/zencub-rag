@@ -3,7 +3,9 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: [".next/**", "node_modules/**", "next-env.d.ts"],
+    // `.next-*` covers the per-deployment build directories from
+    // scripts/deploy/build.sh (.next-public, .next-demo).
+    ignores: [".next/**", ".next-*/**", "node_modules/**", "next-env.d.ts"],
   },
   js.configs.recommended,
   tseslint.configs.recommended,
