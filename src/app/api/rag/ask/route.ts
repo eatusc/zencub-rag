@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { generateAnswer, probeQwen, providerModel } from "@/lib/answerProviders";
+import { isPublicMode, publicAskProvider } from "@/lib/appMode";
 import { getServerEnv } from "@/lib/env";
 import { normalizeProvider, type AnswerProvider } from "@/lib/providers";
 import {
@@ -25,7 +26,12 @@ export async function POST(request: NextRequest) {
   };
   const query = typeof body.query === "string" ? body.query.trim() : "";
   const requestedRetrieval = body.retrieval === "text" || body.retrieval === "vector" ? body.retrieval : "auto";
-  const requestedProvider = normalizeProvider(body.provider);
+  // On the public deployment the caller does not get to pick the model: "claude"
+  // spawns a CLI process per request and "openai" spends money. Anonymous
+  // traffic gets whatever the server configured, never what the body asked for.
+  const requestedProvider = isPublicMode()
+    ? normalizeProvider(publicAskProvider())
+    : normalizeProvider(body.provider);
   const conversation = normalizeConversation(body.conversation);
   const contextIds = normalizeContextIds(body.context_ids);
 

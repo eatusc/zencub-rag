@@ -25,3 +25,10 @@ docs/evals/*.json
 .env
 .env.*
 !.env.example
+
+# Production build outputs for the two Cloudflare Tunnel deployments
+.next-public/
+.next-demo/
+
+# Demo PIN + cookie secret for the full deployment
+scripts/deploy/prod.env
