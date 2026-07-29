@@ -25,6 +25,10 @@ never ship something that is not on `origin/main`, and never discards work in
 progress to get there. `next-env.d.ts` is exempt from that check because every
 build rewrites it.
 
+A deploy holds `.deploy.lock` for its duration, so a hand-run deploy and the
+scheduled one cannot build into the same directories at once. A lock left behind
+by a killed deploy is reclaimed automatically once its process is gone.
+
 Build and restart are one step on purpose. `build.sh` writes into
 `.next-public` and `.next-demo` while the old servers are still reading them, so
 the gap between building and restarting is a window where a running server can

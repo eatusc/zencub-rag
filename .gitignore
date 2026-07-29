@@ -32,3 +32,6 @@ docs/evals/*.json
 
 # Demo PIN + cookie secret for the full deployment
 scripts/deploy/prod.env
+
+# Held by scripts/deploy/deploy.sh while a deploy is in flight.
+.deploy.lock/
