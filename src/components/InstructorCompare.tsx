@@ -56,6 +56,52 @@ function seconds(value: number) {
 }
 
 const COMPARE_PROVIDERS: AnswerProvider[] = ["qwen", "openrouter", "openai"];
+const INSTRUCTOR_COMPARE_SESSION_STORAGE_KEY = "zencub-rag:instructor-compare-sessions:v1";
+
+type PersistedInstructorCompareSession = {
+  token: string;
+  savedAt: number;
+};
+
+type PersistedInstructorCompareSessions = Record<string, PersistedInstructorCompareSession>;
+
+function readPersistedInstructorCompareSessions(): PersistedInstructorCompareSessions {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(INSTRUCTOR_COMPARE_SESSION_STORAGE_KEY) ?? "{}") as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).flatMap(([threadId, value]) => {
+      if (!value || typeof value !== "object") return [];
+      const candidate = value as Partial<PersistedInstructorCompareSession>;
+      if (typeof candidate.token !== "string" || candidate.token.length < 32 || candidate.token.length > 100) return [];
+      return [[threadId, {
+        token: candidate.token,
+        savedAt: typeof candidate.savedAt === "number" ? candidate.savedAt : 0,
+      }]];
+    }));
+  } catch {
+    return {};
+  }
+}
+
+function persistInstructorCompareSession(threadId: string, token: string): PersistedInstructorCompareSessions {
+  const current = readPersistedInstructorCompareSessions();
+  if (!threadId || token.length < 32 || token.length > 100) return current;
+  const next = Object.fromEntries(
+    Object.entries({
+      ...current,
+      [threadId]: { token, savedAt: Date.now() },
+    })
+      .sort(([, left], [, right]) => right.savedAt - left.savedAt)
+      .slice(0, 100),
+  );
+  try {
+    localStorage.setItem(INSTRUCTOR_COMPARE_SESSION_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // The active in-memory session still works when browser storage is unavailable.
+  }
+  return next;
+}
 
 export function InstructorCompare({ providers }: { providers: ProviderInfo[] }) {
   const [query, setQuery] = useState(EXAMPLES[0]);
@@ -74,6 +120,7 @@ export function InstructorCompare({ providers }: { providers: ProviderInfo[] }) 
   const [storedTotal, setStoredTotal] = useState(0);
   const [storedLoading, setStoredLoading] = useState(true);
   const [storedError, setStoredError] = useState<string | null>(null);
+  const [persistedSessions, setPersistedSessions] = useState<PersistedInstructorCompareSessions>({});
 
   const compareProviders = useMemo(() => COMPARE_PROVIDERS.map((id) => providers.find((item) => item.id === id)).filter((item): item is ProviderInfo => Boolean(item)), [providers]);
   const selectedProvider = compareProviders.find((item) => item.id === provider);
@@ -97,6 +144,10 @@ export function InstructorCompare({ providers }: { providers: ProviderInfo[] }) 
   useEffect(() => {
     void loadStoredRuns();
   }, [loadStoredRuns]);
+
+  useEffect(() => {
+    setPersistedSessions(readPersistedInstructorCompareSessions());
+  }, []);
 
   useEffect(() => {
     if (selectedProvider?.available) return;
@@ -142,7 +193,9 @@ export function InstructorCompare({ providers }: { providers: ProviderInfo[] }) 
   }
 
   function acceptWorkflowPayload(payload: RagInstructorCompareResponse | RagInstructorComparePausedResponse) {
-    setSession({ threadId: payload.thread_id, token: payload.session_token ?? "" });
+    const token = payload.session_token ?? "";
+    setSession({ threadId: payload.thread_id, token });
+    if (token) setPersistedSessions(persistInstructorCompareSession(payload.thread_id, token));
     if ("status" in payload && payload.status === "paused") {
       setPaused(payload);
       setResult(null);
@@ -188,6 +241,29 @@ export function InstructorCompare({ providers }: { providers: ProviderInfo[] }) 
     const next = followUp.trim();
     setFollowUp("");
     await postSession({ action: "follow_up", query: next });
+  }
+
+  function resumeStoredResearch(run: RagStoredInstructorCompareRun) {
+    const persisted = persistedSessions[run.thread_id];
+    if (!persisted) {
+      setError("This browser no longer has the capability required to resume that research thread.");
+      return;
+    }
+    setProvider(run.provider);
+    setQuery(run.query);
+    setSession({ threadId: run.thread_id, token: persisted.token });
+    setPaused(null);
+    setResult({ ...run, session_token: persisted.token });
+    setRuns((previous) => [
+      run,
+      ...previous.filter((item) => item.thread_id !== run.thread_id || item.session.turn_index !== run.session.turn_index),
+    ].slice(0, 6));
+    setFollowUp("");
+    setRecoverable(false);
+    setError(null);
+    window.requestAnimationFrame(() => {
+      document.getElementById("instructor-compare-research-controls")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   return (
@@ -275,7 +351,15 @@ export function InstructorCompare({ providers }: { providers: ProviderInfo[] }) 
         />
       </>}
       {runs.length > 1 && <RunHistory runs={runs} />}
-      <StoredRunExplorer runs={storedRuns} total={storedTotal} loading={storedLoading} error={storedError} onRefresh={loadStoredRuns} />
+      <StoredRunExplorer
+        runs={storedRuns}
+        total={storedTotal}
+        loading={storedLoading}
+        error={storedError}
+        resumableThreadIds={new Set(Object.keys(persistedSessions))}
+        onRefresh={loadStoredRuns}
+        onResume={resumeStoredResearch}
+      />
     </div>
   );
 }
@@ -312,7 +396,7 @@ function PanelReview({ proposal, loading, onDecision }: { proposal: RagInstructo
 }
 
 function ResearchSessionControls({ result, followUp, onFollowUpChange, onSubmit, loading, providers, onExperiment }: { result: RagInstructorCompareResponse; followUp: string; onFollowUpChange: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>; loading: boolean; providers: ProviderInfo[]; onExperiment: (provider: AnswerProvider) => void }) {
-  return <section className="grid gap-4 md:grid-cols-2">
+  return <section id="instructor-compare-research-controls" className="grid scroll-mt-6 gap-4 md:grid-cols-2">
     <form onSubmit={(event) => void onSubmit(event)} className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex items-center gap-2"><RotateCcw size={14} className="text-accent" /><h2 className="text-sm font-bold">Continue this research thread</h2></div><p className="mt-1 text-[10px] text-muted-foreground">Ask a narrower follow-up. The same thread reuses the approved evidence panel and retrieves only additional material.</p><textarea value={followUp} onChange={(event) => onFollowUpChange(event.target.value)} placeholder="Now focus on their preferred grips…" className="mt-3 min-h-16 w-full resize-none rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs outline-none" /><button disabled={loading || followUp.trim().length < 2} className="mt-2 rounded-lg bg-primary px-3 py-2 text-[10px] font-bold text-primary-foreground disabled:opacity-50">Run follow-up on turn {result.session.turn_index + 1}</button></form>
     <div className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex items-center gap-2"><FlaskConical size={14} className="text-accent" /><h2 className="text-sm font-bold">Branch from the approved evidence</h2></div><p className="mt-1 text-[10px] text-muted-foreground">Run a different model from the same panel checkpoint. The original trajectory remains unchanged, so quality and cost are comparable.</p><div className="mt-3 flex flex-wrap gap-2">{providers.filter((item) => item.available && item.id !== result.provider).map((item) => <button key={item.id} type="button" disabled={loading} onClick={() => onExperiment(item.id)} className="rounded-lg border border-border bg-secondary px-2.5 py-2 text-[10px] font-bold disabled:opacity-50">Branch with {item.label}</button>)}</div><p className="mt-3 font-mono text-[9px] text-muted-foreground">original {result.thread_id}</p></div>
   </section>;
@@ -500,13 +584,17 @@ function StoredRunExplorer({
   total,
   loading,
   error,
+  resumableThreadIds,
   onRefresh,
+  onResume,
 }: {
   runs: RagStoredInstructorCompareRun[];
   total: number;
   loading: boolean;
   error: string | null;
+  resumableThreadIds: Set<string>;
   onRefresh: () => Promise<void>;
+  onResume: (run: RagStoredInstructorCompareRun) => void;
 }) {
   const [search, setSearch] = useState("");
   const [provider, setProvider] = useState<"all" | "qwen" | "openrouter" | "openai">("all");
@@ -517,6 +605,19 @@ function StoredRunExplorer({
       && (!needle || [run.query, run.comparison.topic, run.model, ...run.comparison.instructors.map((item) => item.creator_name)].join(" ").toLowerCase().includes(needle)));
   }, [provider, runs, search]);
   const selected = runs.find((run) => run.stored_run_id === selectedId) ?? null;
+  const latestTurnByThread = useMemo(() => {
+    const latest = new Map<string, number>();
+    for (const run of runs) {
+      latest.set(run.thread_id, Math.max(latest.get(run.thread_id) ?? 0, run.session?.turn_index ?? 0));
+    }
+    return latest;
+  }, [runs]);
+  const selectedIsLatestTurn = Boolean(
+    selected && (selected.session?.turn_index ?? 0) === latestTurnByThread.get(selected.thread_id),
+  );
+  const selectedCanResume = Boolean(
+    selected && selectedIsLatestTurn && resumableThreadIds.has(selected.thread_id),
+  );
 
   useEffect(() => {
     if (!selected) return;
@@ -557,16 +658,41 @@ function StoredRunExplorer({
         }} className="cursor-pointer border-b border-border/60 outline-none transition-colors last:border-0 hover:bg-accent/5 focus:bg-accent/5 focus:ring-1 focus:ring-inset focus:ring-accent"><td className="whitespace-nowrap py-2.5 pr-3 text-muted-foreground">{new Date(run.stored_at).toLocaleString()}</td><td className="max-w-72 pr-3"><strong className="line-clamp-2">{run.query}</strong><span className="mt-0.5 block text-[9px] text-muted-foreground">{run.comparison.instructors.map((item) => item.creator_name).join(" · ")}</span></td><td><span className={`whitespace-nowrap rounded-full border px-2 py-1 text-[8px] font-black ${branch ? "border-violet-200 bg-violet-50 text-violet-700" : followUp ? "border-blue-200 bg-blue-50 text-blue-700" : "border-border bg-secondary text-muted-foreground"}`}>{runType}</span></td><td><strong>{run.model}</strong><span className="block text-[9px] text-muted-foreground">{run.provider}</span></td><td>{(run.total_ms / 1000).toFixed(1)}s</td><td>{run.usage.total_tokens.toLocaleString()}</td><td>{run.evidence_count} videos</td><td>{run.comparison.shared_principles.length} consensus · {run.comparison.important_differences.length} differences · {run.comparison.caveats.length} caveats</td><td className="pl-3"><span className="whitespace-nowrap rounded-lg border border-border bg-card px-2.5 py-1.5 text-[9px] font-black">View details</span></td></tr>;
       })}</tbody></table></div>}
     </section>
-    {selected && <StoredRunModal run={selected} onClose={() => setSelectedId(null)} />}
+    {selected && <StoredRunModal
+      run={selected}
+      canResume={selectedCanResume}
+      isLatestTurn={selectedIsLatestTurn}
+      onClose={() => setSelectedId(null)}
+      onResume={() => {
+        setSelectedId(null);
+        onResume(selected);
+      }}
+    />}
   </div>;
 }
 
-function StoredRunModal({ run, onClose }: { run: RagStoredInstructorCompareRun; onClose: () => void }) {
+function StoredRunModal({
+  run,
+  canResume,
+  isLatestTurn,
+  onClose,
+  onResume,
+}: {
+  run: RagStoredInstructorCompareRun;
+  canResume: boolean;
+  isLatestTurn: boolean;
+  onClose: () => void;
+  onResume: () => void;
+}) {
   return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-foreground/65 p-2 backdrop-blur-sm sm:p-5" role="presentation" onMouseDown={onClose}>
     <section role="dialog" aria-modal="true" aria-labelledby="stored-run-modal-title" onMouseDown={(event) => event.stopPropagation()} className="max-h-[96vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
       <header className="sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
         <div className="min-w-0"><p className="text-[9px] font-black uppercase tracking-widest text-accent">Stored quality review</p><h2 id="stored-run-modal-title" className="mt-0.5 truncate text-base font-bold sm:text-lg">{run.comparison.topic}</h2><p className="mt-1 text-[9px] text-muted-foreground">Saved {new Date(run.stored_at).toLocaleString()} · immutable run <span className="font-mono">{run.stored_run_id}</span></p></div>
-        <button type="button" onClick={onClose} aria-label="Close stored comparison details" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-secondary hover:border-foreground/30"><X size={16} /></button>
+        <div className="flex shrink-0 items-center gap-2">
+          {canResume && <button type="button" onClick={onResume} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[10px] font-black text-primary-foreground"><RotateCcw size={11} />Resume research thread</button>}
+          {!canResume && <span className="hidden max-w-48 text-right text-[9px] leading-relaxed text-muted-foreground sm:block">{isLatestTurn ? "Resume capability is not saved in this browser." : "Open the latest saved turn to resume this thread."}</span>}
+          <button type="button" onClick={onClose} aria-label="Close stored comparison details" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-secondary hover:border-foreground/30"><X size={16} /></button>
+        </div>
       </header>
       <div className="max-h-[calc(96vh-76px)] overflow-y-auto p-3 sm:p-6"><ComparisonResult result={run} /></div>
     </section>
