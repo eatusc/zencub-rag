@@ -12,6 +12,70 @@ through a Cloudflare Tunnel. Nothing about this changes the local dev server.
 The dev server on 3417 is untouched by any of this: it keeps its own `.next`
 directory, and the PIN gate is skipped outside `NODE_ENV=production`.
 
+## Deploying
+
+```bash
+./scripts/deploy/deploy.sh
+```
+
+That is the whole procedure: fast-forward `main`, build both surfaces, restart
+both, then block until the public surface reports the new commit. It refuses to
+run on a branch other than `main` or with uncommitted changes, so a deploy can
+never ship something that is not on `origin/main`, and never discards work in
+progress to get there. `next-env.d.ts` is exempt from that check because every
+build rewrites it.
+
+Build and restart are one step on purpose. `build.sh` writes into
+`.next-public` and `.next-demo` while the old servers are still reading them, so
+the gap between building and restarting is a window where a running server can
+fail on a chunk that no longer matches its manifest. Running `build.sh` alone is
+still supported for a build-only check; it now says plainly that the servers are
+still on the old build.
+
+### Knowing what is live
+
+Every build stamps its commit into the bundle, and `/api/health` reports it:
+
+```bash
+curl -s http://127.0.0.1:3418/api/health
+# {"ok":true,"build":{"sha":"0d694bf","built_at":"..."},"chunks":12104}
+```
+
+The stamp is captured at build time, not read from git at runtime. A server
+reports the commit it was *built from*, which is the only number that can
+reveal staleness. The build info is also returned on the 500 path, because
+"which commit is live" gets asked precisely when something is broken.
+
+Compare against the remote to check for drift:
+
+```bash
+git ls-remote origin main
+```
+
+The demo surface answers 401 on `/api/health` by design, since the PIN gate
+fails closed. Its liveness check is `/unlock`.
+
+### Automatic redeploy
+
+`local.zencub-rag-autodeploy` runs `scripts/deploy/autodeploy.sh` every five
+minutes. It deploys when `origin/main` has moved, and also when the checkout is
+current but the running server reports a different commit, which is what a build
+that failed after the fast-forward leaves behind. It exits silently when there
+is nothing to do, so the log is a list of real deploys:
+
+```bash
+tail -f ~/Library/Logs/zencub-rag/autodeploy.log
+```
+
+Polling rather than a webhook: the Mac Studio is reachable only through the
+Cloudflare Tunnel, and an inbound deploy endpoint is a much larger surface than
+reading a remote ref. A push to `main` reaches production within five minutes,
+so treat `main` as deployable. To pause it:
+
+```bash
+launchctl bootout gui/$(id -u)/local.zencub-rag-autodeploy
+```
+
 ## What each surface exposes
 
 `APP_MODE=public` renders `PublicSearch` instead of the six-tab `SearchClient`,
