@@ -51,6 +51,15 @@ const SYSTEM_PROMPT = [
   "Include no more than 3 key_takeaways. Each must add a useful detail instead of repeating the answer.",
   "Include no more than 3 follow_up_searches.",
   "suggested_follow_up must be one natural, specific question that a jiu-jitsu student could ask next based on this answer.",
+  // Vector retrieval always returns nearest neighbours, so an off-topic or
+  // nonsense question still arrives with eight confident-looking clips. There is
+  // no similarity threshold that separates those from a real but obscure query:
+  // "truck position" scores below "quarterly earnings report for semiconductors"
+  // against this corpus. So the model, which can read both, makes the call, and
+  // citing nothing routes it into the existing no-verified-citation caveat.
+  "The supplied sources are nearest matches, not a guarantee of relevance; they may have nothing to do with the question.",
+  "If the question is unintelligible, or the sources do not actually address it, say so plainly in one sentence, set citations to an empty array, and do not answer from unrelated clips.",
+  "Nonsense input is not a grappling question: never treat the nearest clips as the intended topic just because they are the only ones supplied.",
   "citations must be an array containing 1-3 source id numbers copied from the provided sources, for example [1, 2].",
   "If any source supports the answer, include at least one citation.",
   "Prefer citing 2 or more distinct videos when multiple sources support the answer, rather than repeating one video at different timestamps.",

@@ -130,8 +130,22 @@ describe("validateAnswerCitations", () => {
       missing: true,
     });
     expect(resolved.answer.caveats[0]).toBe(
-      "No model citation passed source validation; review the retrieved transcript moments directly.",
+      "No clip was cited, so the retrieved transcript moments may not cover this question.",
     );
+  });
+
+  it("distinguishes citing nothing from citing only unresolvable sources", () => {
+    const citedNothing = validateAnswerCitations(answer([]), [source(1)]);
+    const citedGarbage = validateAnswerCitations(answer([modelCitation("nope")]), [source(1)]);
+
+    expect(citedNothing.validation.requested).toBe(0);
+    expect(citedNothing.answer.caveats).toEqual([
+      "No clip was cited, so the retrieved transcript moments may not cover this question.",
+    ]);
+    expect(citedGarbage.answer.caveats).toEqual([
+      "1 citation was removed because the source could not be verified.",
+      "No model citation passed source validation; review the retrieved transcript moments directly.",
+    ]);
   });
 
   it("keeps valid citations, removes invalid ones, and reports the exact counts", () => {

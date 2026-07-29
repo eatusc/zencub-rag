@@ -262,7 +262,13 @@ export function validateAnswerCitations(
     );
   }
   if (validation.missing) {
-    validationCaveats.push("No model citation passed source validation; review the retrieved transcript moments directly.");
+    // Citing nothing and citing only unresolvable sources are different
+    // failures. The first usually means the retrieved clips do not cover the
+    // question, which is what an off-topic query produces; saying they failed
+    // validation would be wrong, because none were offered to validate.
+    validationCaveats.push(validation.requested === 0
+      ? "No clip was cited, so the retrieved transcript moments may not cover this question."
+      : "No model citation passed source validation; review the retrieved transcript moments directly.");
   }
 
   return {
