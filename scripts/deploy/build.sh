@@ -25,8 +25,14 @@ APP_MODE=public NEXT_DIST_DIR=.next-public npx next build
 echo "==> Building full demo surface (.next-demo)"
 APP_MODE=full NEXT_DIST_DIR=.next-demo npx next build
 
-echo "==> Built $BUILD_SHA. The servers are still on the previous build."
-echo "    Prefer scripts/deploy/deploy.sh, which builds and restarts as one step."
-echo "    To restart these builds by hand:"
-echo "    launchctl kickstart -k gui/$(id -u)/local.zencub-rag-public"
-echo "    launchctl kickstart -k gui/$(id -u)/local.zencub-rag-demo"
+echo "==> Built $BUILD_SHA."
+
+# deploy.sh restarts on its own immediately after this, so the stale-servers
+# warning would be wrong there. It is only true when build.sh is run by hand.
+if [ -z "${DEPLOY_WILL_RESTART:-}" ]; then
+  echo "    The servers are still on the previous build."
+  echo "    Prefer scripts/deploy/deploy.sh, which builds and restarts as one step."
+  echo "    To restart these builds by hand:"
+  echo "    launchctl kickstart -k gui/$(id -u)/local.zencub-rag-public"
+  echo "    launchctl kickstart -k gui/$(id -u)/local.zencub-rag-demo"
+fi

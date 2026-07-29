@@ -44,7 +44,7 @@ else
   echo "==> ${before:0:7} -> ${after:0:7}"
 fi
 
-./scripts/deploy/build.sh
+DEPLOY_WILL_RESTART=1 ./scripts/deploy/build.sh
 
 echo "==> Restarting both surfaces"
 launchctl kickstart -k "gui/$UID_NUM/local.zencub-rag-public"
