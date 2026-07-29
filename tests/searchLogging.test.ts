@@ -88,6 +88,50 @@ describe("buildSearchLogPayload", () => {
     });
   });
 
+  it("separates a display-cap truncation from a verification failure", () => {
+    const payload = buildSearchLogPayload({
+      query: "over-cited answer",
+      action: "ask",
+      provider: "openrouter",
+      retrieval: "hybrid",
+      outcome: {
+        success: true,
+        statusCode: 200,
+        durationMs: 100,
+        resultCount: 8,
+        citationRequestedCount: 5,
+        citationVerifiedCount: 3,
+        citationRejectedCount: 0,
+        citationTruncatedCount: 2,
+        citationMissing: false,
+      },
+    });
+
+    expect(payload.metadata).toMatchObject({
+      citation_requested_count: 5,
+      citation_verified_count: 3,
+      citation_truncated_count: 2,
+      citation_validation_failed: false,
+    });
+  });
+
+  it("keeps the answering provider in the column and marks that a fallback happened", () => {
+    const payload = buildSearchLogPayload({
+      query: "guard passing",
+      action: "ask",
+      provider: "openrouter",
+      retrieval: "hybrid",
+      metadata: { resolved_provider: "qwen", provider_fallback: true },
+      outcome: { success: true, statusCode: 200, durationMs: 90, resultCount: 8 },
+    });
+
+    expect(payload.provider).toBe("openrouter");
+    expect(payload.metadata).toMatchObject({
+      resolved_provider: "qwen",
+      provider_fallback: true,
+    });
+  });
+
   it("records failure outcomes without leaking raw error messages", () => {
     const payload = buildSearchLogPayload({
       query: "heel hook defense",

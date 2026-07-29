@@ -21,11 +21,17 @@ export type RagSource = {
   gi_nogi: string | null;
 };
 
+// The answer prompt asks for at most 3 citations. Validation runs over
+// everything the model returned and this cap is applied to the survivors, so a
+// model that over-cites cannot push valid citations out before they are checked.
+export const MAX_DISPLAYED_CITATIONS = 3;
+
 export type CitationValidation = {
   requested: number;
   verified: number;
   rejected: number;
   duplicates: number;
+  truncated: number;
   missing: boolean;
 };
 
@@ -142,7 +148,7 @@ export function coerceAnswer(value: unknown): RagAnswer {
 
   return {
     answer: typeof raw.answer === "string" ? conciseAnswerText(raw.answer) : fallback.answer,
-    citations: Array.isArray(raw.citations) ? raw.citations.slice(0, 3).map((citation) => {
+    citations: Array.isArray(raw.citations) ? raw.citations.slice(0, 8).map((citation) => {
       const primitive = typeof citation === "string" || typeof citation === "number" ? String(citation) : "";
       const item = citation && typeof citation === "object" ? citation as Record<string, unknown> : {};
       const reference = [item.citation, item.source_id, item.source, item.id, item.ref]
@@ -201,11 +207,17 @@ export function validateAnswerCitations(
           String(candidate.id),
           `source ${candidate.id}`,
           candidate.result_id ?? "",
-          candidate.video_id,
           candidate.citation,
         ].map(normalize);
         return Boolean(reference) && identifiers.includes(reference);
       })
+      // A bare video ID names a video, not a moment, and one video can supply
+      // several retrieved clips. Require the cited timestamp to fall inside the
+      // clip so the displayed link cannot point at a different moment.
+      ?? sources.find((candidate) => Boolean(reference)
+        && normalize(candidate.video_id) === reference
+        && citation.start_seconds >= candidate.start_seconds - 1
+        && citation.start_seconds <= candidate.end_seconds + 1)
       ?? sources.find((candidate) => title !== "untitled source"
         && title !== "no citation"
         && normalize(candidate.title) === title
@@ -213,7 +225,7 @@ export function validateAnswerCitations(
         && citation.start_seconds <= candidate.end_seconds + 1);
   };
 
-  const verifiedCitations: RagAnswerCitation[] = [];
+  const resolvedSources: RagSource[] = [];
   let rejected = 0;
   let duplicates = 0;
   for (const citation of answer.citations) {
@@ -227,14 +239,20 @@ export function validateAnswerCitations(
       continue;
     }
     usedSources.add(matched.id);
-    verifiedCitations.push(toCitation(matched));
+    resolvedSources.push(matched);
   }
+  // Cap the survivors, never the input: dropping the overflow here keeps the
+  // "removed because the source could not be verified" caveat honest, because
+  // a truncated citation was verified, it just did not fit the display limit.
+  const displayed = resolvedSources.slice(0, MAX_DISPLAYED_CITATIONS);
+  const verifiedCitations = displayed.map(toCitation);
 
   const validation: CitationValidation = {
     requested: answer.citations.length,
     verified: verifiedCitations.length,
     rejected,
     duplicates,
+    truncated: resolvedSources.length - displayed.length,
     missing: verifiedCitations.length === 0 && sources.length > 0,
   };
   const validationCaveats: string[] = [];

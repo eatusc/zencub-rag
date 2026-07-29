@@ -53,13 +53,13 @@ function answer(citations: RagAnswerCitation[], caveats: string[] = []): RagAnsw
 }
 
 describe("coerceAnswer citation contract", () => {
-  it("keeps at most the three citations allowed by the prompt contract", () => {
+  it("keeps over-cited model output intact so validation sees every claim", () => {
     const coerced = coerceAnswer({
       answer: "Test",
       citations: [1, 2, 3, 4, 5],
     });
 
-    expect(coerced.citations.map((citation) => citation.citation)).toEqual(["1", "2", "3"]);
+    expect(coerced.citations.map((citation) => citation.citation)).toEqual(["1", "2", "3", "4", "5"]);
   });
 });
 
@@ -73,6 +73,7 @@ describe("validateAnswerCitations", () => {
       verified: 1,
       rejected: 0,
       duplicates: 0,
+      truncated: 0,
       missing: false,
     });
     expect(resolved.answer.citations).toEqual([{
@@ -88,7 +89,7 @@ describe("validateAnswerCitations", () => {
 
   it("accepts supported source ID forms without trusting model display metadata", () => {
     const retrieved = source(2);
-    for (const reference of ["source 2", "result-2", "video-2", retrieved.citation]) {
+    for (const reference of ["source 2", "result-2", retrieved.citation]) {
       const resolved = validateAnswerCitations(answer([modelCitation(reference)]), [retrieved]);
       expect(resolved.validation.verified, reference).toBe(1);
       expect(resolved.answer.citations[0]?.title, reference).toBe(retrieved.title);
@@ -107,6 +108,7 @@ describe("validateAnswerCitations", () => {
       verified: 0,
       rejected: 1,
       duplicates: 0,
+      truncated: 0,
       missing: true,
     });
     expect(resolved.answer.caveats).toEqual([
@@ -124,6 +126,7 @@ describe("validateAnswerCitations", () => {
       verified: 0,
       rejected: 0,
       duplicates: 0,
+      truncated: 0,
       missing: true,
     });
     expect(resolved.answer.caveats[0]).toBe(
@@ -146,6 +149,7 @@ describe("validateAnswerCitations", () => {
       verified: 2,
       rejected: 1,
       duplicates: 0,
+      truncated: 0,
       missing: false,
     });
     expect(resolved.answer.caveats[0]).toBe(
@@ -170,6 +174,7 @@ describe("validateAnswerCitations", () => {
       verified: 2,
       rejected: 0,
       duplicates: 1,
+      truncated: 0,
       missing: false,
     });
   });
@@ -186,6 +191,82 @@ describe("validateAnswerCitations", () => {
       "Evidence was narrow.",
       "Position was ambiguous.",
     ]);
+  });
+
+  it("resolves a bare video ID to the clip containing the cited moment, not the first clip of that video", () => {
+    const early = source(1, { video_id: "shared-video", title: "Early clip" });
+    const later = source(2, { video_id: "shared-video", title: "Later clip" });
+    const citesLaterMoment: RagAnswerCitation = {
+      ...modelCitation("shared-video"),
+      start_seconds: later.start_seconds + 5,
+    };
+
+    const resolved = validateAnswerCitations(answer([citesLaterMoment]), [early, later]);
+
+    expect(resolved.answer.citations[0]?.title).toBe("Later clip");
+    expect(resolved.answer.citations[0]?.start_seconds).toBe(later.start_seconds);
+    expect(resolved.validation.verified).toBe(1);
+  });
+
+  it("rejects a video ID whose cited moment falls outside every retrieved clip", () => {
+    const early = source(1, { video_id: "shared-video" });
+    const later = source(2, { video_id: "shared-video" });
+
+    // modelCitation() cites second 999; neither clip covers it.
+    const resolved = validateAnswerCitations(answer([modelCitation("shared-video")]), [early, later]);
+
+    expect(resolved.answer.citations).toEqual([]);
+    expect(resolved.validation.rejected).toBe(1);
+    expect(resolved.validation.verified).toBe(0);
+  });
+
+  it("truncates verified citations past the display cap without calling them unverifiable", () => {
+    const resolved = validateAnswerCitations(
+      answer([
+        modelCitation("1"),
+        modelCitation("2"),
+        modelCitation("3"),
+        modelCitation("4"),
+      ]),
+      [source(1), source(2), source(3), source(4)],
+    );
+
+    expect(resolved.answer.citations.map((citation) => citation.title)).toEqual([
+      "Retrieved title 1",
+      "Retrieved title 2",
+      "Retrieved title 3",
+    ]);
+    expect(resolved.validation).toEqual({
+      requested: 4,
+      verified: 3,
+      rejected: 0,
+      duplicates: 0,
+      truncated: 1,
+      missing: false,
+    });
+    expect(resolved.answer.caveats).toEqual([]);
+  });
+
+  it("keeps valid citations that an over-citing model listed after invalid ones", () => {
+    // Truncating before validation used to discard sources 3 and 4 unseen, then
+    // tell the user two citations had failed verification.
+    const resolved = validateAnswerCitations(
+      answer([
+        modelCitation("nope"),
+        modelCitation("also-nope"),
+        modelCitation("3"),
+        modelCitation("4"),
+      ]),
+      [source(1), source(2), source(3), source(4)],
+    );
+
+    expect(resolved.answer.citations.map((citation) => citation.title)).toEqual([
+      "Retrieved title 3",
+      "Retrieved title 4",
+    ]);
+    expect(resolved.validation.verified).toBe(2);
+    expect(resolved.validation.rejected).toBe(2);
+    expect(resolved.validation.missing).toBe(false);
   });
 
   it("does not claim missing validation when there were no retrieved sources", () => {

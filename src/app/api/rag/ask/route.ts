@@ -36,14 +36,12 @@ export async function POST(request: NextRequest) {
   const conversation = normalizeConversation(body.conversation);
   const contextIds = normalizeContextIds(body.context_ids);
 
-  if (query.length < 2) {
-    return NextResponse.json({ error: "Query must be at least 2 characters." }, { status: 400 });
-  }
-  if (query.length > 1_000) {
-    return NextResponse.json({ error: "Query must be 1,000 characters or fewer." }, { status: 400 });
-  }
-
   const startedAt = performance.now();
+  // `resolvedProvider` is the provider this request chose before any fallback,
+  // including the auto-detected one. Without it a fallback is invisible whenever
+  // the caller did not name a provider, which is every request on the demo
+  // surface and any public deployment that leaves RAG_PUBLIC_ASK_PROVIDER unset.
+  let resolvedProvider: AnswerProvider | undefined = requestedProvider;
   let actualProvider: AnswerProvider | undefined = requestedProvider;
   let actualRetrieval: "text" | "vector" | "hybrid" | undefined;
   const recordOutcome = async (outcome: {
@@ -56,9 +54,12 @@ export async function POST(request: NextRequest) {
     citationVerifiedCount?: number;
     citationRejectedCount?: number;
     citationDuplicateCount?: number;
+    citationTruncatedCount?: number;
     citationMissing?: boolean;
   }) => logSearch({
-    query,
+    // rag_search_logs.query requires at least 2 characters and stores the text
+    // as-is, so an over-long rejected query is trimmed to the accepted maximum.
+    query: query.slice(0, 1_000),
     action: conversation.length > 0 ? "follow_up" : "ask",
     ...(actualProvider ? { provider: actualProvider } : {}),
     ...(actualRetrieval ? { retrieval: actualRetrieval } : {}),
@@ -71,8 +72,25 @@ export async function POST(request: NextRequest) {
     metadata: {
       conversation_turns: conversation.length,
       retained_context_sources: contextIds.length,
+      ...(resolvedProvider ? { resolved_provider: resolvedProvider } : {}),
+      provider_fallback: Boolean(resolvedProvider && actualProvider && actualProvider !== resolvedProvider),
     },
   });
+
+  // A query under two characters cannot be written to rag_search_logs at all,
+  // so only the over-long rejection is measurable here.
+  if (query.length < 2) {
+    return NextResponse.json({ error: "Query must be at least 2 characters." }, { status: 400 });
+  }
+  if (query.length > 1_000) {
+    await recordOutcome({
+      success: false,
+      statusCode: 400,
+      resultCount: 0,
+      errorCode: "query_too_long",
+    });
+    return NextResponse.json({ error: "Query must be 1,000 characters or fewer." }, { status: 400 });
+  }
 
   try {
     const env = getServerEnv();
@@ -83,6 +101,7 @@ export async function POST(request: NextRequest) {
     // to the local Qwen model when it's reachable (the Mac Studio), else OpenAI.
     let provider: AnswerProvider = requestedProvider
       ?? ((await probeQwen(env)) ? "qwen" : hasOpenRouter ? "openrouter" : "openai");
+    resolvedProvider = provider;
     actualProvider = provider;
     if (provider === "openrouter" && !hasOpenRouter) {
       await recordOutcome({
@@ -161,6 +180,7 @@ export async function POST(request: NextRequest) {
       citationVerifiedCount: resolved.validation.verified,
       citationRejectedCount: resolved.validation.rejected,
       citationDuplicateCount: resolved.validation.duplicates,
+      citationTruncatedCount: resolved.validation.truncated,
       citationMissing: resolved.validation.missing,
     });
 

@@ -77,6 +77,9 @@ const CompareState = Annotation.Root({
   qualityGaps: Annotation<string[]>(replace<string[]>(() => [])),
   panelStatus: Annotation<"pending" | "approved" | "edited" | "rejected">({ reducer: (_p, n) => n, default: () => "pending" }),
   excludedClipIds: Annotation<number[]>(replace<number[]>(() => [])),
+  // Stable row IDs behind excludedClipIds, so a reviewer's removals survive a
+  // panel rebuild. Older checkpoints simply default to an empty list.
+  excludedClipRowIds: Annotation<string[]>(replace<string[]>(() => [])),
   testFailureSlug: Annotation<string | null>({ reducer: (_p, n) => n, default: () => null }),
   selectedProvider: Annotation<AnswerProvider>({ reducer: (_p, n) => n, default: () => "qwen" }),
   requestedInstructors: Annotation<number>({ reducer: (_p, n) => n, default: () => 3 }),
@@ -147,6 +150,7 @@ function initializeNode(state: State): Partial<State> {
     qualityGaps: [],
     panelStatus: "pending",
     excludedClipIds: [],
+    excludedClipRowIds: [],
     synthesis: null,
     comparison: null,
     trace: [trace(
@@ -284,7 +288,12 @@ async function preparePanelNode(state: State): Promise<Partial<State>> {
     modelCalls.push(modelCall("evidence_rerank", state.selectedProvider, generation.model, performance.now() - modelStartedAt, generation.usage));
   }
   const byId = new Map(state.attributedCandidates.map((candidate) => [candidate.row.id, candidate]));
+  // A refinement round rebuilds the panel from the candidate pool, so clips a
+  // reviewer removed would otherwise reappear. Clip IDs in the proposal are
+  // positional and change between rounds; the underlying row ID does not.
+  const excludedRows = new Set(state.excludedClipRowIds);
   const ranked = uniqueRows(rerankedRows).flatMap((row) => {
+    if (excludedRows.has(row.id)) return [];
     const candidate = byId.get(row.id);
     return candidate ? [{ ...candidate, row }] : [];
   });
@@ -415,11 +424,17 @@ function reviewPanelNode(state: State): Partial<State> {
   }
   if (decision.action === "edit") {
     const excluded = new Set(decision.excluded_clip_ids.filter(Number.isInteger));
+    const excludedRowIds = state.groups
+      .flatMap((group) => group.sources)
+      .flatMap((source) => (excluded.has(source.id) && source.result_id ? [source.result_id] : []));
     const groups = state.groups.map((group) => ({ ...group, sources: group.sources.filter((source) => !excluded.has(source.id)) })).filter((group) => group.sources.length > 0);
     if (groups.length < 2) throw new Error("Panel edits must retain evidence for at least two instructors.");
     return {
       groups,
       excludedClipIds: [...excluded],
+      // Accumulate across rounds: a later review must not reinstate an earlier
+      // removal just because that clip was not on screen the second time.
+      excludedClipRowIds: [...new Set([...state.excludedClipRowIds, ...excludedRowIds])],
       panelStatus: "edited",
       trace: [trace("compare_panel_review", "Human evidence review", `${excluded.size} clip${excluded.size === 1 ? "" : "s"} removed before analysis`, startedAt)],
     };

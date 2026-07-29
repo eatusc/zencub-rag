@@ -14,6 +14,7 @@ export type SearchOutcome = {
   citationVerifiedCount?: number;
   citationRejectedCount?: number;
   citationDuplicateCount?: number;
+  citationTruncatedCount?: number;
   citationMissing?: boolean;
 };
 
@@ -49,6 +50,9 @@ export function buildSearchLogPayload(entry: SearchLog) {
       : {}),
     ...(entry.outcome.citationDuplicateCount !== undefined
       ? { citation_duplicate_count: Math.max(0, Math.round(entry.outcome.citationDuplicateCount)) }
+      : {}),
+    ...(entry.outcome.citationTruncatedCount !== undefined
+      ? { citation_truncated_count: Math.max(0, Math.round(entry.outcome.citationTruncatedCount)) }
       : {}),
     ...(entry.outcome.citationMissing !== undefined
       ? { citation_missing: entry.outcome.citationMissing }

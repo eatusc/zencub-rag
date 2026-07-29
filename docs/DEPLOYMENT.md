@@ -68,9 +68,20 @@ visible. The initial production signals are:
 - success/error rate (`success`, `status_code`, `error_code`)
 - result and zero-result rate (`result_count`)
 - end-to-end route latency (`duration_ms`)
+- provider fallback (`resolved_provider` is the provider chosen before any
+  fallback, including an auto-detected one; `provider_fallback` is true when a
+  different provider ended up answering)
 - citation validation (`citation_requested_count`,
-  `citation_verified_count`, `citation_rejected_count`, `citation_missing`,
-  and `citation_validation_failed`)
+  `citation_verified_count`, `citation_rejected_count`,
+  `citation_truncated_count`, `citation_missing`, and
+  `citation_validation_failed`)
+
+A row is written when a request finishes, so these rates have a denominator of
+requests that reached the route and ran. Queries under two characters cannot be
+logged at all, because `rag_search_logs.query` requires two, and requests turned
+away by the middleware rate limiter never reach the route; count those at the
+Cloudflare WAF instead. `citation_truncated_count` is not a failure: those
+citations were verified and then dropped at the three-citation display cap.
 
 Example daily rollup:
 
@@ -114,7 +125,16 @@ is stored server-side and rotating `DEMO_SECRET` logs everyone out.
 
 `RAG_COMPARE_MAX_REFINEMENT_ROUNDS` controls the total targeted-retrieval
 budget shared by both Instructor Compare loop-back gates. It is clamped to
-`0–3`; the recommended demo value is `2`.
+`0-3`; the recommended demo value is `2`.
+
+Each repair round rebuilds the panel and re-runs every per-instructor analysis,
+the synthesis, and all claim verifications, because the branch recovery cache is
+keyed by round. Raising the budget raises model spend in step. In guided mode a
+loop-back from the final quality gate also passes through the human review pause
+again, so one run can ask for panel approval more than once; clips removed in an
+earlier review stay removed. Setting the budget to `0` disables repair entirely,
+which also means a panel with fewer than two attributed instructors fails
+immediately instead of getting a targeted-retrieval attempt.
 
 ## Deploying a change
 
