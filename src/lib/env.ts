@@ -11,6 +11,7 @@ type ServerEnv = {
   ragEmbeddingModel: string;
   ragRerankModel: string;
   ragRerankEnabled: boolean;
+  ragCompareMaxRefinementRounds: number;
   ragQwenBaseUrl: string;
   ragQwenModel: string;
   ragOpenRouterBaseUrl: string;
@@ -18,6 +19,16 @@ type ServerEnv = {
   ragClaudeBin: string;
   ragClaudeModel: string;
 };
+
+export const DEFAULT_COMPARE_MAX_REFINEMENT_ROUNDS = 2;
+export const MAX_COMPARE_MAX_REFINEMENT_ROUNDS = 3;
+
+export function parseComparisonRefinementRounds(value: string | undefined): number {
+  if (value === undefined || value.trim() === "") return DEFAULT_COMPARE_MAX_REFINEMENT_ROUNDS;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_COMPARE_MAX_REFINEMENT_ROUNDS;
+  return Math.min(MAX_COMPARE_MAX_REFINEMENT_ROUNDS, Math.max(0, Math.trunc(parsed)));
+}
 
 export function getServerEnv(): ServerEnv {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -44,6 +55,9 @@ export function getServerEnv(): ServerEnv {
     ragEmbeddingModel: process.env.RAG_EMBEDDING_MODEL ?? "text-embedding-3-small",
     ragRerankModel: process.env.RAG_RERANK_MODEL ?? process.env.RAG_ANALYZE_MODEL ?? "gpt-4o-mini",
     ragRerankEnabled: process.env.RAG_RERANK !== "off",
+    ragCompareMaxRefinementRounds: parseComparisonRefinementRounds(
+      process.env.RAG_COMPARE_MAX_REFINEMENT_ROUNDS,
+    ),
     // Local Qwen served by Ollama's OpenAI-compatible endpoint on the Mac Studio.
     ragQwenBaseUrl: process.env.RAG_QWEN_BASE_URL ?? "http://localhost:11434/v1",
     ragQwenModel: process.env.RAG_QWEN_MODEL ?? "qwen3.6:35b-mlx",

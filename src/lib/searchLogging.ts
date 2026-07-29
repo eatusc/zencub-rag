@@ -3,13 +3,81 @@ import type { AnswerProvider } from "@/lib/providers";
 
 export type SearchAction = "keyword" | "semantic" | "analyze" | "ask" | "follow_up";
 
-type SearchLog = {
+export type SearchOutcome = {
+  success: boolean;
+  statusCode: number;
+  durationMs: number;
+  resultCount: number;
+  model?: string;
+  errorCode?: string;
+  citationRequestedCount?: number;
+  citationVerifiedCount?: number;
+  citationRejectedCount?: number;
+  citationDuplicateCount?: number;
+  citationMissing?: boolean;
+};
+
+export type SearchLog = {
   query: string;
   action: SearchAction;
   provider?: AnswerProvider;
   retrieval?: "auto" | "text" | "vector" | "hybrid";
+  requestedProvider?: AnswerProvider;
+  requestedRetrieval?: "auto" | "text" | "vector";
+  outcome?: SearchOutcome;
   metadata?: Record<string, string | number | boolean | null>;
 };
+
+export function buildSearchLogPayload(entry: SearchLog) {
+  const outcomeMetadata = entry.outcome ? {
+    success: entry.outcome.success,
+    status_code: entry.outcome.statusCode,
+    duration_ms: Math.max(0, Math.round(entry.outcome.durationMs)),
+    result_count: Math.max(0, Math.round(entry.outcome.resultCount)),
+    ...(entry.outcome.model ? { model: entry.outcome.model } : {}),
+    ...(entry.outcome.errorCode ? { error_code: entry.outcome.errorCode } : {}),
+    ...(entry.outcome.citationRequestedCount !== undefined
+      ? { citation_requested_count: Math.max(0, Math.round(entry.outcome.citationRequestedCount)) }
+      : {}),
+    ...(entry.outcome.citationVerifiedCount !== undefined
+      ? { citation_verified_count: Math.max(0, Math.round(entry.outcome.citationVerifiedCount)) }
+      : {}),
+    ...(entry.outcome.citationRejectedCount !== undefined
+      ? {
+        citation_rejected_count: Math.max(0, Math.round(entry.outcome.citationRejectedCount)),
+      }
+      : {}),
+    ...(entry.outcome.citationDuplicateCount !== undefined
+      ? { citation_duplicate_count: Math.max(0, Math.round(entry.outcome.citationDuplicateCount)) }
+      : {}),
+    ...(entry.outcome.citationMissing !== undefined
+      ? { citation_missing: entry.outcome.citationMissing }
+      : {}),
+    ...(
+      entry.outcome.citationRejectedCount !== undefined || entry.outcome.citationMissing !== undefined
+        ? {
+          citation_validation_failed:
+            (entry.outcome.citationRejectedCount ?? 0) > 0 || entry.outcome.citationMissing === true,
+        }
+        : {}
+    ),
+  } : {};
+
+  return {
+    query: entry.query,
+    action: entry.action,
+    // These columns describe what actually ran. Requested values remain in
+    // metadata so provider fallback and retrieval fallback are measurable.
+    provider: entry.provider ?? null,
+    retrieval: entry.retrieval ?? null,
+    metadata: {
+      ...(entry.requestedProvider ? { requested_provider: entry.requestedProvider } : {}),
+      ...(entry.requestedRetrieval ? { requested_retrieval: entry.requestedRetrieval } : {}),
+      ...entry.metadata,
+      ...outcomeMetadata,
+    },
+  };
+}
 
 /**
  * Persist a user-triggered search without allowing analytics to break the app.
@@ -19,13 +87,7 @@ type SearchLog = {
 export async function logSearch(entry: SearchLog): Promise<void> {
   try {
     const supabase = createServerSupabase();
-    const payload = {
-      query: entry.query,
-      action: entry.action,
-      provider: entry.provider ?? null,
-      retrieval: entry.retrieval ?? null,
-      metadata: entry.metadata ?? {},
-    };
+    const payload = buildSearchLogPayload(entry);
     const { error } = await supabase
       .from("rag_search_logs")
       .insert(payload)

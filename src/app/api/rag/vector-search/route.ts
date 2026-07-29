@@ -16,11 +16,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ query, results: [], retrieval: "vector" });
   }
 
-  await logSearch({ query, action: "semantic", retrieval: "vector" });
-
+  const startedAt = performance.now();
   try {
     const env = getServerEnv();
     if (!env.openaiApiKey) {
+      await logSearch({
+        query,
+        action: "semantic",
+        retrieval: "vector",
+        requestedRetrieval: "vector",
+        outcome: {
+          success: false,
+          statusCode: 500,
+          durationMs: performance.now() - startedAt,
+          resultCount: 0,
+          errorCode: "missing_openai_key",
+        },
+      });
       return NextResponse.json({ error: "Missing OPENAI_API_KEY." }, { status: 500 });
     }
 
@@ -32,6 +44,19 @@ export async function GET(request: NextRequest) {
 
     const queryEmbedding = embedding.data[0]?.embedding;
     if (!queryEmbedding) {
+      await logSearch({
+        query,
+        action: "semantic",
+        retrieval: "vector",
+        requestedRetrieval: "vector",
+        outcome: {
+          success: false,
+          statusCode: 500,
+          durationMs: performance.now() - startedAt,
+          resultCount: 0,
+          errorCode: "embedding_missing",
+        },
+      });
       return NextResponse.json({ error: "Embedding request returned no vector." }, { status: 500 });
     }
 
@@ -43,6 +68,19 @@ export async function GET(request: NextRequest) {
     });
 
     if (error) {
+      await logSearch({
+        query,
+        action: "semantic",
+        retrieval: "vector",
+        requestedRetrieval: "vector",
+        outcome: {
+          success: false,
+          statusCode: 500,
+          durationMs: performance.now() - startedAt,
+          resultCount: 0,
+          errorCode: "database_search_failed",
+        },
+      });
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
@@ -52,6 +90,19 @@ export async function GET(request: NextRequest) {
     }));
     const coarseResults = capPerVideo(filterDegenerate(ranked)).slice(0, limit);
     const results = await refineResultTimestamps(query, coarseResults);
+    await logSearch({
+      query,
+      action: "semantic",
+      retrieval: "vector",
+      requestedRetrieval: "vector",
+      outcome: {
+        success: true,
+        statusCode: 200,
+        durationMs: performance.now() - startedAt,
+        resultCount: results.length,
+        model: env.ragEmbeddingModel,
+      },
+    });
 
     return NextResponse.json({
       query,
@@ -60,6 +111,19 @@ export async function GET(request: NextRequest) {
       results,
     });
   } catch (error) {
+    await logSearch({
+      query,
+      action: "semantic",
+      retrieval: "vector",
+      requestedRetrieval: "vector",
+      outcome: {
+        success: false,
+        statusCode: 500,
+        durationMs: performance.now() - startedAt,
+        resultCount: 0,
+        errorCode: "semantic_search_failed",
+      },
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 },

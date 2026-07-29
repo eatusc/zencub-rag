@@ -2,7 +2,7 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import { Annotation, Command, END, Send, START, StateGraph, interrupt } from "@langchain/langgraph";
 import OpenAI from "openai";
 import { generateStructuredJson } from "@/lib/answerProviders";
-import { getServerEnv } from "@/lib/env";
+import { DEFAULT_COMPARE_MAX_REFINEMENT_ROUNDS, getServerEnv } from "@/lib/env";
 import {
   attributeCandidates,
   selectInstructorCandidates,
@@ -10,6 +10,7 @@ import {
   type CanonicalInstructor,
 } from "@/lib/instructorComparison";
 import { getLangGraphCheckpointer } from "@/lib/langgraph/checkpointer";
+import { canRefineComparison } from "@/lib/langgraph/refinementPolicy";
 import { langfuseCallbacks } from "@/lib/langfuseHandler";
 import { claimFailureInjection, logRecoveryExecution } from "@/lib/langgraph/testEvents";
 import { metadataResults, textResults, uniqueRows, vectorResults, type RetrievalMode } from "@/lib/ragPipeline";
@@ -69,7 +70,10 @@ const CompareState = Annotation.Root({
   claimVerificationStartIndex: Annotation<number>({ reducer: (_p, n) => n, default: () => 0 }),
   analysisStartIndex: Annotation<number>({ reducer: (_p, n) => n, default: () => 0 }),
   refinementRound: Annotation<number>({ reducer: (_p, n) => n, default: () => 0 }),
-  maxRefinementRounds: Annotation<number>({ reducer: (_p, n) => n, default: () => 1 }),
+  maxRefinementRounds: Annotation<number>({
+    reducer: (_p, n) => n,
+    default: () => DEFAULT_COMPARE_MAX_REFINEMENT_ROUNDS,
+  }),
   qualityGaps: Annotation<string[]>(replace<string[]>(() => [])),
   panelStatus: Annotation<"pending" | "approved" | "edited" | "rejected">({ reducer: (_p, n) => n, default: () => "pending" }),
   excludedClipIds: Annotation<number[]>(replace<number[]>(() => [])),
@@ -348,7 +352,11 @@ function assessPanelNode(state: State): Partial<State> {
 }
 
 function routePanelQuality(state: State): "refine" | "review" {
-  return state.qualityGaps.length > 0 && state.refinementRound < state.maxRefinementRounds ? "refine" : "review";
+  return canRefineComparison({
+    qualityGapCount: state.qualityGaps.length,
+    refinementRound: state.refinementRound,
+    maxRefinementRounds: state.maxRefinementRounds,
+  }) ? "refine" : "review";
 }
 
 async function targetedRetrievalNode(state: State, config: RunnableConfig): Promise<Partial<State>> {
@@ -739,7 +747,11 @@ function finalQualityNode(state: State): Partial<State> {
 }
 
 function routeFinalQuality(state: State): "refine" | "finish" {
-  return state.qualityGaps.length > 0 && state.refinementRound < state.maxRefinementRounds ? "refine" : "finish";
+  return canRefineComparison({
+    qualityGapCount: state.qualityGaps.length,
+    refinementRound: state.refinementRound,
+    maxRefinementRounds: state.maxRefinementRounds,
+  }) ? "refine" : "finish";
 }
 
 function finishNode(state: State): Partial<State> {
@@ -796,13 +808,14 @@ export async function runInstructorComparison(input: {
   instructorCount: number;
   provider: Exclude<AnswerProvider, "claude">;
 }): Promise<Omit<RagInstructorCompareResponse, "query" | "engine" | "thread_id" | "provider" | "model" | "models" | "zero_paid_model_mode" | "total_ms">> {
+  const maxRefinementRounds = getServerEnv().ragCompareMaxRefinementRounds;
   const final = await getGraph().invoke({
     threadId: input.threadId,
     nextQuery: input.query,
     requestedInstructors: input.instructorCount,
     selectedProvider: input.provider,
     guided: false,
-    maxRefinementRounds: 1,
+    maxRefinementRounds,
   }, { ...config(input.threadId), callbacks: langfuseCallbacks() });
   return completedResult(input.threadId, final);
 }
@@ -897,13 +910,14 @@ export async function startGuidedInstructorComparison(input: {
   provider: Exclude<AnswerProvider, "claude">;
   testFailureSlug?: string | null;
 }): Promise<InstructorCompareWorkflowResult> {
+  const maxRefinementRounds = getServerEnv().ragCompareMaxRefinementRounds;
   const final = await getGraph().invoke({
     threadId: input.threadId,
     nextQuery: input.query,
     requestedInstructors: input.instructorCount,
     selectedProvider: input.provider,
     guided: true,
-    maxRefinementRounds: 1,
+    maxRefinementRounds,
     testFailureSlug: input.testFailureSlug ?? null,
   }, { ...config(input.threadId), callbacks: langfuseCallbacks() });
   return workflowResult(input.threadId, final);

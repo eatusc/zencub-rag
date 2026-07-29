@@ -14,8 +14,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ query, results: [] });
   }
 
-  await logSearch({ query, action: "keyword", retrieval: "text" });
-
+  const startedAt = performance.now();
   try {
     const supabase = createServerSupabase();
     // Over-fetch so degenerate-filtering and per-video diversity still leave
@@ -26,17 +25,55 @@ export async function GET(request: NextRequest) {
     });
 
     if (error) {
+      await logSearch({
+        query,
+        action: "keyword",
+        retrieval: "text",
+        requestedRetrieval: "text",
+        outcome: {
+          success: false,
+          statusCode: 500,
+          durationMs: performance.now() - startedAt,
+          resultCount: 0,
+          errorCode: "database_search_failed",
+        },
+      });
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     const coarseResults = capPerVideo(filterDegenerate((data ?? []) as RagSearchResult[])).slice(0, limit);
     const results = await refineResultTimestamps(query, coarseResults);
+    await logSearch({
+      query,
+      action: "keyword",
+      retrieval: "text",
+      requestedRetrieval: "text",
+      outcome: {
+        success: true,
+        statusCode: 200,
+        durationMs: performance.now() - startedAt,
+        resultCount: results.length,
+      },
+    });
 
     return NextResponse.json({
       query,
       results,
     });
   } catch (error) {
+    await logSearch({
+      query,
+      action: "keyword",
+      retrieval: "text",
+      requestedRetrieval: "text",
+      outcome: {
+        success: false,
+        statusCode: 500,
+        durationMs: performance.now() - startedAt,
+        resultCount: 0,
+        errorCode: "search_failed",
+      },
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 },

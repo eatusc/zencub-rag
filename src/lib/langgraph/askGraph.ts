@@ -11,7 +11,7 @@ import {
   filterDegenerate,
   rrfFuse,
 } from "@/lib/ragRetrieval";
-import { coerceAnswer, formatRagSource, hydrateAnswerCitations, type RagSource } from "@/lib/ragUtils";
+import { coerceAnswer, formatRagSource, validateAnswerCitations, type RagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
 import { refineResultTimestamps } from "@/lib/timestampRefinement";
 import { langfuseCallbacks } from "@/lib/langfuseHandler";
@@ -273,8 +273,19 @@ async function generateNode(state: State): Promise<Partial<State>> {
     { response_format: { type: "json_object" } },
   );
 
-  const answer = hydrateAnswerCitations(coerceAnswer(safeParse(messageText(response as AIMessageChunk))), state.sources);
-  return { answer, trace: [trace("generate", "Generate", `cited answer from ${state.sources.length} sources (${env.ragAnswerModel})`, startedAt)] };
+  const resolved = validateAnswerCitations(
+    coerceAnswer(safeParse(messageText(response as AIMessageChunk))),
+    state.sources,
+  );
+  return {
+    answer: resolved.answer,
+    trace: [trace(
+      "generate",
+      "Generate",
+      `${resolved.validation.verified} verified citations from ${state.sources.length} sources (${env.ragAnswerModel})`,
+      startedAt,
+    )],
+  };
 }
 
 // ---- Graph wiring ---------------------------------------------------------

@@ -14,6 +14,7 @@ import {
   uniqueRows,
 } from "@/lib/ragPipeline";
 import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
+import { validateAnswerCitations } from "@/lib/ragUtils";
 import { logSearch } from "@/lib/searchLogging";
 
 export async function POST(request: NextRequest) {
@@ -42,11 +43,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Query must be 1,000 characters or fewer." }, { status: 400 });
   }
 
-  await logSearch({
+  const startedAt = performance.now();
+  let actualProvider: AnswerProvider | undefined = requestedProvider;
+  let actualRetrieval: "text" | "vector" | "hybrid" | undefined;
+  const recordOutcome = async (outcome: {
+    success: boolean;
+    statusCode: number;
+    resultCount: number;
+    model?: string;
+    errorCode?: string;
+    citationRequestedCount?: number;
+    citationVerifiedCount?: number;
+    citationRejectedCount?: number;
+    citationDuplicateCount?: number;
+    citationMissing?: boolean;
+  }) => logSearch({
     query,
     action: conversation.length > 0 ? "follow_up" : "ask",
-    provider: requestedProvider,
-    retrieval: requestedRetrieval,
+    ...(actualProvider ? { provider: actualProvider } : {}),
+    ...(actualRetrieval ? { retrieval: actualRetrieval } : {}),
+    ...(requestedProvider ? { requestedProvider } : {}),
+    requestedRetrieval,
+    outcome: {
+      ...outcome,
+      durationMs: performance.now() - startedAt,
+    },
     metadata: {
       conversation_turns: conversation.length,
       retained_context_sources: contextIds.length,
@@ -62,10 +83,23 @@ export async function POST(request: NextRequest) {
     // to the local Qwen model when it's reachable (the Mac Studio), else OpenAI.
     let provider: AnswerProvider = requestedProvider
       ?? ((await probeQwen(env)) ? "qwen" : hasOpenRouter ? "openrouter" : "openai");
+    actualProvider = provider;
     if (provider === "openrouter" && !hasOpenRouter) {
+      await recordOutcome({
+        success: false,
+        statusCode: 500,
+        resultCount: 0,
+        errorCode: "missing_openrouter_key",
+      });
       return NextResponse.json({ error: "Missing OPENROUTER_API_KEY." }, { status: 500 });
     }
     if (provider === "openai" && !hasOpenai) {
+      await recordOutcome({
+        success: false,
+        statusCode: 500,
+        resultCount: 0,
+        errorCode: "missing_openai_key",
+      });
       return NextResponse.json({ error: "Missing OPENAI_API_KEY." }, { status: 500 });
     }
 
@@ -80,9 +114,16 @@ export async function POST(request: NextRequest) {
       buildCandidates(retrievalQuery, openai ? requestedRetrieval : "text", openai, env),
       contextResults(contextIds),
     ]);
+    actualRetrieval = retrieval === "metadata" ? "hybrid" : retrieval;
     const candidates = capPerVideo(filterDegenerate(uniqueRows([...priorRows, ...rows])));
 
     if (candidates.length === 0) {
+      await recordOutcome({
+        success: false,
+        statusCode: 404,
+        resultCount: 0,
+        errorCode: "no_sources",
+      });
       return NextResponse.json({ error: "No sources found to answer from." }, { status: 404 });
     }
 
@@ -103,24 +144,44 @@ export async function POST(request: NextRequest) {
           : null;
       if (fallback) {
         provider = fallback;
+        actualProvider = fallback;
         generation = await generateAnswer(fallback, query, sources, env, openai, conversation);
       } else {
         throw genError;
       }
     }
+    const resolved = validateAnswerCitations(generation.answer, sources);
+    const model = providerModel(provider, env);
+    await recordOutcome({
+      success: true,
+      statusCode: 200,
+      resultCount: sources.length,
+      model,
+      citationRequestedCount: resolved.validation.requested,
+      citationVerifiedCount: resolved.validation.verified,
+      citationRejectedCount: resolved.validation.rejected,
+      citationDuplicateCount: resolved.validation.duplicates,
+      citationMissing: resolved.validation.missing,
+    });
 
     return NextResponse.json({
       query,
       provider,
-      model: providerModel(provider, env),
+      model,
       retrieval,
       reranked: didRerank,
       source_count: sources.length,
       context_ids: top.map((row) => row.id),
       usage: generation.usage,
-      answer: generation.answer,
+      answer: resolved.answer,
     });
   } catch (error) {
+    await recordOutcome({
+      success: false,
+      statusCode: 500,
+      resultCount: 0,
+      errorCode: "ask_failed",
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 },

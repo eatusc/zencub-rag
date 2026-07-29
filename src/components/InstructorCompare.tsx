@@ -43,7 +43,7 @@ const GUIDE = [
   { icon: Search, title: "Ask one situational question", detail: "Describe the exact position or problem—not an instructor name." },
   { icon: Network, title: "Retrieve in parallel", detail: "Enabled retrieval branches fan out independently; free local mode skips paid semantic embeddings." },
   { icon: Users, title: "Build a fair panel", detail: "Canonical attribution groups evidence and prevents one instructor from dominating." },
-  { icon: RotateCcw, title: "Repair evidence gaps", detail: "A quality gate loops weak panels through one bounded, targeted retrieval round." },
+  { icon: RotateCcw, title: "Repair evidence gaps", detail: "Quality gates can loop weak evidence through a bounded, configurable targeted-retrieval budget." },
   { icon: PauseCircle, title: "Pause for your review", detail: "Approve, remove clips, or reject from a durable checkpoint before model analysis." },
   { icon: GitBranch, title: "Analyze independently", detail: "LangGraph creates one parallel branch per instructor with only that instructor’s evidence." },
   { icon: Workflow, title: "Converge and compare", detail: "The branches join to identify supported consensus, differences, and situational choices." },

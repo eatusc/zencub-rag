@@ -4,7 +4,7 @@
 import { execFile } from "node:child_process";
 import OpenAI from "openai";
 import type { getServerEnv } from "@/lib/env";
-import { coerceAnswer, hydrateAnswerCitations, type RagSource } from "@/lib/ragUtils";
+import { coerceAnswer, type RagSource } from "@/lib/ragUtils";
 import {
   ANSWER_PROVIDERS,
   PROVIDER_META,
@@ -146,7 +146,7 @@ async function generateViaOpenAICompatible(
   });
   const content = completion.choices[0]?.message.content ?? "{}";
   return {
-    answer: hydrateAnswerCitations(coerceAnswer(extractJson(content)), sources),
+    answer: coerceAnswer(extractJson(content)),
     usage: tokenUsage(
       completion.usage?.prompt_tokens,
       completion.usage?.completion_tokens,
@@ -203,7 +203,7 @@ async function generateViaClaude(
     userContent(query, sources, conversation),
   ].join("\n");
   const result = await runClaude(prompt, env);
-  return { answer: hydrateAnswerCitations(coerceAnswer(extractJson(result.text)), sources), usage: result.usage };
+  return { answer: coerceAnswer(extractJson(result.text)), usage: result.usage };
 }
 
 // `openaiClient` is the client the route already built for embeddings/rerank;

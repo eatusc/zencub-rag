@@ -9,7 +9,7 @@ import { enrichCandidates, type RetrievalMode } from "@/lib/ragPipeline";
 import { runRetrievalSubgraph } from "@/lib/langgraph/retrievalSubgraph";
 import { getLangGraphCheckpointer } from "@/lib/langgraph/checkpointer";
 import { langfuseCallbacks } from "@/lib/langfuseHandler";
-import type { RagSource } from "@/lib/ragUtils";
+import { validateAnswerCitations, type RagSource } from "@/lib/ragUtils";
 import type {
   RagAnswer,
   RagConversationTurn,
@@ -253,28 +253,14 @@ function validateNode(state: State): Partial<State> {
   const startedAt = performance.now();
   if (!state.answer) return { trace: [trace("validate", "Check citations", "No answer to validate", startedAt)] };
 
-  const validCitations = state.answer.citations.filter((citation) => state.sources.some((source) => {
-    if (citation.watch_url && source.watch_url === citation.watch_url) return true;
-    return citation.title === source.title
-      && citation.start_seconds >= source.start_seconds - 1
-      && citation.start_seconds <= source.end_seconds + 1;
-  }));
-  const removed = state.answer.citations.length - validCitations.length;
-  const missing = validCitations.length === 0 && state.sources.length > 0;
-  const caveats = [...state.answer.caveats];
-  if (removed > 0) caveats.push(`${removed} citation${removed === 1 ? " was" : "s were"} removed because the source could not be verified.`);
-  if (missing) caveats.push("No model citation passed source validation; review the retrieved transcript moments directly.");
+  const resolved = validateAnswerCitations(state.answer, state.sources);
 
   return {
-    answer: {
-      ...state.answer,
-      citations: validCitations,
-      caveats: caveats.slice(0, 4),
-    },
+    answer: resolved.answer,
     trace: [trace(
       "validate",
       "Check citations",
-      `${validCitations.length} verified · ${removed} removed`,
+      `${resolved.validation.verified} verified · ${resolved.validation.rejected} removed`,
       startedAt,
     )],
   };

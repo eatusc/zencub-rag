@@ -58,6 +58,42 @@ seconds per answer. `openrouter` answers in about 8 seconds for roughly $0.001
 per call. Add a Cloudflare WAF rate-limiting rule on `/api/rag/ask` in front of
 all of this.
 
+## Public search outcome metrics
+
+Keyword, semantic, Ask, and public follow-up requests store completed outcomes
+in `rag_search_logs.metadata`. The `provider` and `retrieval` columns describe
+what actually ran; requested values remain in metadata so fallbacks are
+visible. The initial production signals are:
+
+- success/error rate (`success`, `status_code`, `error_code`)
+- result and zero-result rate (`result_count`)
+- end-to-end route latency (`duration_ms`)
+- citation validation (`citation_requested_count`,
+  `citation_verified_count`, `citation_rejected_count`, `citation_missing`,
+  and `citation_validation_failed`)
+
+Example daily rollup:
+
+```sql
+select
+  date_trunc('day', created_at) as day,
+  count(*) as requests,
+  avg((metadata->>'success')::boolean::int) as success_rate,
+  avg(((metadata->>'result_count')::int = 0)::int) as zero_result_rate,
+  percentile_cont(0.5) within group (
+    order by (metadata->>'duration_ms')::int
+  ) as p50_ms,
+  percentile_cont(0.95) within group (
+    order by (metadata->>'duration_ms')::int
+  ) as p95_ms,
+  avg(coalesce((metadata->>'citation_validation_failed')::boolean::int, 0))
+    filter (where action in ('ask', 'follow_up')) as citation_failure_rate
+from public.rag_search_logs
+where metadata ? 'success'
+group by 1
+order by 1 desc;
+```
+
 ## Secrets
 
 Shared secrets stay in `.env.local`, which Next loads on its own. `serve.sh`
@@ -75,6 +111,10 @@ cp scripts/deploy/prod.env.example scripts/deploy/prod.env
 Both must be set or the demo deployment fails closed with a 503. The unlock
 cookie is an HMAC-signed expiry stamp with a 12-hour life, so no session state
 is stored server-side and rotating `DEMO_SECRET` logs everyone out.
+
+`RAG_COMPARE_MAX_REFINEMENT_ROUNDS` controls the total targeted-retrieval
+budget shared by both Instructor Compare loop-back gates. It is clamped to
+`0–3`; the recommended demo value is `2`.
 
 ## Deploying a change
 

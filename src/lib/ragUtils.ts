@@ -21,6 +21,14 @@ export type RagSource = {
   gi_nogi: string | null;
 };
 
+export type CitationValidation = {
+  requested: number;
+  verified: number;
+  rejected: number;
+  duplicates: number;
+  missing: boolean;
+};
+
 export function asNumber(value: number | string | null | undefined) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -134,7 +142,7 @@ export function coerceAnswer(value: unknown): RagAnswer {
 
   return {
     answer: typeof raw.answer === "string" ? conciseAnswerText(raw.answer) : fallback.answer,
-    citations: Array.isArray(raw.citations) ? raw.citations.slice(0, 8).map((citation) => {
+    citations: Array.isArray(raw.citations) ? raw.citations.slice(0, 3).map((citation) => {
       const primitive = typeof citation === "string" || typeof citation === "number" ? String(citation) : "";
       const item = citation && typeof citation === "object" ? citation as Record<string, unknown> : {};
       const reference = [item.citation, item.source_id, item.source, item.id, item.ref]
@@ -162,12 +170,16 @@ export function coerceAnswer(value: unknown): RagAnswer {
   };
 }
 
-// Citation display metadata comes from the database, not the answer model. This
-// keeps thumbnails and links reliable even when a provider returns only source
-// IDs, citation strings, or malformed display fields.
-export function hydrateAnswerCitations(answer: RagAnswer, sources: RagSource[]): RagAnswer {
+// A displayed citation must resolve to one of the exact sources supplied to the
+// answer model. Display metadata always comes from that retrieved database row;
+// unmatched model output is removed rather than silently replaced by a
+// different source.
+export function validateAnswerCitations(
+  answer: RagAnswer,
+  sources: RagSource[],
+): { answer: RagAnswer; validation: CitationValidation } {
   const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const usedVideos = new Set<string>();
+  const usedSources = new Set<number>();
 
   const toCitation = (source: RagSource): RagAnswerCitation => ({
     title: source.title,
@@ -201,32 +213,46 @@ export function hydrateAnswerCitations(answer: RagAnswer, sources: RagSource[]):
         && citation.start_seconds <= candidate.end_seconds + 1);
   };
 
-  const hydrated: RagAnswerCitation[] = [];
-  for (const [index, citation] of answer.citations.slice(0, 3).entries()) {
-    const positional = sources[index];
-    const matched = findSource(citation)
-      ?? (positional && !usedVideos.has(positional.video_id) ? positional : undefined)
-      ?? sources.find((candidate) => !usedVideos.has(candidate.video_id));
-    if (!matched || usedVideos.has(matched.video_id)) continue;
-    usedVideos.add(matched.video_id);
-    hydrated.push(toCitation(matched));
+  const verifiedCitations: RagAnswerCitation[] = [];
+  let rejected = 0;
+  let duplicates = 0;
+  for (const citation of answer.citations) {
+    const matched = findSource(citation);
+    if (!matched) {
+      rejected += 1;
+      continue;
+    }
+    if (usedSources.has(matched.id)) {
+      duplicates += 1;
+      continue;
+    }
+    usedSources.add(matched.id);
+    verifiedCitations.push(toCitation(matched));
   }
 
-  // Some local models omit citations entirely. The top retrieved videos are
-  // still the evidence supplied to the answer model, so expose them as refs.
-  if (hydrated.length === 0) {
-    let fallbackCount = 0;
-    for (const source of sources) {
-      if (usedVideos.has(source.video_id)) continue;
-      usedVideos.add(source.video_id);
-      hydrated.push(toCitation(source));
-      fallbackCount += 1;
-      if (fallbackCount === 3) break;
-    }
+  const validation: CitationValidation = {
+    requested: answer.citations.length,
+    verified: verifiedCitations.length,
+    rejected,
+    duplicates,
+    missing: verifiedCitations.length === 0 && sources.length > 0,
+  };
+  const validationCaveats: string[] = [];
+  if (validation.rejected > 0) {
+    validationCaveats.push(
+      `${validation.rejected} citation${validation.rejected === 1 ? " was" : "s were"} removed because the source could not be verified.`,
+    );
+  }
+  if (validation.missing) {
+    validationCaveats.push("No model citation passed source validation; review the retrieved transcript moments directly.");
   }
 
   return {
-    ...answer,
-    citations: hydrated,
+    answer: {
+      ...answer,
+      citations: verifiedCitations,
+      caveats: [...new Set([...validationCaveats, ...answer.caveats])].slice(0, 4),
+    },
+    validation,
   };
 }
