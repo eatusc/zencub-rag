@@ -14,6 +14,7 @@ import {
   Search,
   ShieldCheck,
   PauseCircle,
+  Printer,
   RotateCcw,
   FlaskConical,
   Users,
@@ -671,6 +672,24 @@ function StoredRunExplorer({
   </div>;
 }
 
+/* Chrome's "Save as PDF" names the file after document.title, so borrow the
+   title for the duration of the print dialog and hand it straight back. */
+function printStoredRun(run: RagStoredInstructorCompareRun) {
+  const topicSlug = run.comparison.topic
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  const previousTitle = document.title;
+  const restore = () => {
+    document.title = previousTitle;
+    window.removeEventListener("afterprint", restore);
+  };
+  document.title = `zencub-instructor-compare-${topicSlug || "run"}-${run.stored_run_id.slice(0, 8)}`;
+  window.addEventListener("afterprint", restore);
+  window.print();
+}
+
 function StoredRunModal({
   run,
   canResume,
@@ -685,16 +704,19 @@ function StoredRunModal({
   onResume: () => void;
 }) {
   return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-foreground/65 p-2 backdrop-blur-sm sm:p-5" role="presentation" onMouseDown={onClose}>
-    <section role="dialog" aria-modal="true" aria-labelledby="stored-run-modal-title" onMouseDown={(event) => event.stopPropagation()} className="max-h-[96vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
-      <header className="sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="min-w-0"><p className="text-[9px] font-black uppercase tracking-widest text-accent">Stored quality review</p><h2 id="stored-run-modal-title" className="mt-0.5 truncate text-base font-bold sm:text-lg">{run.comparison.topic}</h2><p className="mt-1 text-[9px] text-muted-foreground">Saved {new Date(run.stored_at).toLocaleString()} · immutable run <span className="font-mono">{run.stored_run_id}</span></p></div>
-        <div className="flex shrink-0 items-center gap-2">
+    {/* print-surface / print-surface-* are consumed by the print rules in
+        globals.css, which lift this record out of the overlay for PDF export. */}
+    <section role="dialog" aria-modal="true" aria-labelledby="stored-run-modal-title" onMouseDown={(event) => event.stopPropagation()} className="print-surface max-h-[96vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
+      <header className="print-surface-header sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
+        <div className="min-w-0"><p className="text-[9px] font-black uppercase tracking-widest text-accent">Stored quality review</p><h2 id="stored-run-modal-title" className="print-surface-title mt-0.5 truncate text-base font-bold sm:text-lg">{run.comparison.topic}</h2><p className="mt-1 text-[9px] text-muted-foreground">Saved {new Date(run.stored_at).toLocaleString()} · immutable run <span className="font-mono">{run.stored_run_id}</span></p><p className="print-surface-only mt-1 text-[9px] leading-relaxed text-muted-foreground">Question asked: {run.query}</p></div>
+        <div className="print-surface-hide flex shrink-0 items-center gap-2">
+          <button type="button" onClick={() => printStoredRun(run)} className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary px-3 py-2 text-[10px] font-black hover:border-foreground/30"><Printer size={11} />Print / Save PDF</button>
           {canResume && <button type="button" onClick={onResume} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[10px] font-black text-primary-foreground"><RotateCcw size={11} />Resume research thread</button>}
           {!canResume && <span className="hidden max-w-48 text-right text-[9px] leading-relaxed text-muted-foreground sm:block">{isLatestTurn ? "Resume capability is not saved in this browser." : "Open the latest saved turn to resume this thread."}</span>}
           <button type="button" onClick={onClose} aria-label="Close stored comparison details" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-secondary hover:border-foreground/30"><X size={16} /></button>
         </div>
       </header>
-      <div className="max-h-[calc(96vh-76px)] overflow-y-auto p-3 sm:p-6"><ComparisonResult result={run} /></div>
+      <div className="print-surface-body max-h-[calc(96vh-76px)] overflow-y-auto p-3 sm:p-6"><ComparisonResult result={run} /></div>
     </section>
   </div>;
 }

@@ -95,3 +95,107 @@
     color: var(--foreground);
   }
 }
+
+/* ── Print isolation ────────────────────────────────────────────────────
+   A modal record (the stored instructor-comparison review) lives inside a
+   fixed, internally scrolled overlay, so a plain window.print() would emit
+   the whole page behind it plus one clipped viewport slice of the record.
+   An overlay opts into printing by tagging its dialog `.print-surface`:
+   everything outside the surface is dropped, and the wrapper chain that
+   carries it is flattened so the full record paginates normally.
+
+   These live here rather than as Tailwind `print:` utilities because the
+   surface also carries `sm:` padding, and one variant beating the other is
+   not something the markup should have to encode. */
+.print-surface-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  /* Keep the surface, its contents, and only the ancestors holding it. */
+  body:has(.print-surface)
+    *:not(.print-surface):not(.print-surface *):not(:has(.print-surface)) {
+    display: none !important;
+  }
+
+  /* Flatten that ancestor chain: no page shell, no overlay backdrop. */
+  body:has(.print-surface) :has(.print-surface) {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    z-index: auto !important;
+  }
+
+  /* Unclip the surface itself: it is the whole document now. */
+  .print-surface {
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .print-surface-header {
+    position: static !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  /* A truncated one-line heading would lose the topic in the export. */
+  .print-surface-title {
+    overflow: visible !important;
+    white-space: normal !important;
+  }
+
+  .print-surface-body {
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .print-surface-hide {
+    display: none !important;
+  }
+
+  .print-surface-only {
+    display: block;
+  }
+
+  /* Status colours carry meaning here (passed/removed, quality gates). */
+  .print-surface,
+  .print-surface * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Cards and rows only: a whole section is often taller than a page, and
+     asking Chrome to keep one intact just buys a mostly blank page. */
+  .print-surface article,
+  .print-surface tr {
+    break-inside: avoid;
+  }
+}
