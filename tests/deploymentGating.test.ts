@@ -3,6 +3,7 @@ import {
   isInstructorsApiRoute,
   isInstructorsPagePath,
   isPublicApiRoute,
+  publicInstructorsPanelSize,
   publicInstructorsProvider,
 } from "@/lib/appMode";
 import { issueDemoCookie, timingSafeEqual, verifyDemoCookie } from "@/lib/demoAuth";
@@ -186,6 +187,30 @@ describe("instructors surface gating", () => {
     process.env.RAG_INSTRUCTORS_PROVIDER = "claude";
     expect(publicInstructorsProvider()).toBe("openai");
     delete process.env.RAG_INSTRUCTORS_PROVIDER;
+  });
+});
+
+describe("publicInstructorsPanelSize", () => {
+  afterEach(() => { delete process.env.RAG_INSTRUCTORS_PANEL_SIZE; });
+
+  it("defaults to five, which the corpus was measured to support", () => {
+    expect(publicInstructorsPanelSize()).toBe(5);
+  });
+
+  it("clamps to what the graph accepts", () => {
+    process.env.RAG_INSTRUCTORS_PANEL_SIZE = "9";
+    expect(publicInstructorsPanelSize()).toBe(5);
+    process.env.RAG_INSTRUCTORS_PANEL_SIZE = "1";
+    expect(publicInstructorsPanelSize()).toBe(2);
+    process.env.RAG_INSTRUCTORS_PANEL_SIZE = "3";
+    expect(publicInstructorsPanelSize()).toBe(3);
+  });
+
+  it("ignores values that are not whole numbers", () => {
+    process.env.RAG_INSTRUCTORS_PANEL_SIZE = "not-a-number";
+    expect(publicInstructorsPanelSize()).toBe(5);
+    process.env.RAG_INSTRUCTORS_PANEL_SIZE = "3.5";
+    expect(publicInstructorsPanelSize()).toBe(5);
   });
 });
 

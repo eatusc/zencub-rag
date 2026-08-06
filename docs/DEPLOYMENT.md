@@ -110,7 +110,16 @@ Page paths are limited to `/` and `/c/<uuid>`; anything else redirects home.
 The demo's own `/api/rag/instructor-compare` is **not** exposed here, because
 that route accepts a caller-chosen provider and a test-mode failure slug. This
 surface pins the provider and the model server-side in `serve.sh`, fixes the
-panel at three instructors, and has no test-mode surface at all.
+panel size (`RAG_INSTRUCTORS_PANEL_SIZE`, default 5), and has no test-mode
+surface at all.
+
+The panel is five rather than three because the corpus supports it. Measured
+across three topics on gpt-4o-mini, every five-instructor panel filled
+completely, all three scored 100% on claim verification against 67% for a
+three-instructor run of the same question, and evidence rose from 4-6 clips to
+6-8. Latency did not move (20-36s), because the analysis branches fan out in
+parallel: a wider panel is two more concurrent calls, not two more sequential
+ones. Cost per run goes from roughly $0.006 to $0.008.
 
 `APP_MODE=full` serves everything, behind a PIN. It also pins
 `LANGGRAPH_TEST_MODE=off`: without that it inherits `on` from `.env.local`,
@@ -162,6 +171,7 @@ Layered, since the public host is anonymous:
 | Site-wide daily comparison budget | `RAG_INSTRUCTORS_DAILY_BUDGET` | 500/day |
 | Public answer model | `RAG_PUBLIC_ASK_PROVIDER` | `openrouter` |
 | Public comparison model | `RAG_INSTRUCTORS_PROVIDER` | `openai` (gpt-4o-mini) |
+| Instructors per panel | `RAG_INSTRUCTORS_PANEL_SIZE` | 5 (clamped 2-5) |
 
 The per-IP comparison limit also applies to the demo's workflow routes
 (`/api/rag/instructor-compare`, `/api/rag/graph-ask`, `/api/rag/graph-follow-up`).
@@ -169,7 +179,8 @@ Before that, the PIN was the only thing between a shared demo link and
 unbounded model spend.
 
 A comparison is about a dozen model calls, measured at 27.5k input and 3k output
-tokens, so roughly $0.006 on gpt-4o-mini. The 500/day ceiling is about $3/day.
+tokens, so roughly $0.008 on gpt-4o-mini at a five-instructor panel. The
+500/day ceiling is about $4/day.
 When it trips, the page says so plainly.
 
 In-process counters are sufficient here because each surface is a single

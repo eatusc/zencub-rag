@@ -253,7 +253,7 @@ export function InstructorsApp({ initialRunId }: { initialRunId?: string }) {
           <section className={hasOutput ? "text-center pt-10 pb-8" : "text-center pt-16 sm:pt-24 pb-10"}>
             <p className="text-[11px] tracking-[0.18em] text-zc-gold uppercase m-0">The Panel</p>
             <h1 className="text-[28px] sm:text-[46px] font-semibold leading-[1.1] tracking-tight mt-4 mx-auto max-w-[760px] text-balance text-zc-text-primary">
-              Three instructors on one position.{" "}
+              Five instructors on one position.{" "}
               <span className="text-zc-gold font-medium">Where they agree, where they split.</span>
             </h1>
             {!hasOutput && (

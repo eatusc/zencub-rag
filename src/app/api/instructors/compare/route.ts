@@ -24,7 +24,7 @@ import {
   instructorCompareThreadExists,
   runInstructorComparisonStreamed,
 } from "@/lib/langgraph/instructorCompareGraph";
-import { publicInstructorsProvider } from "@/lib/appMode";
+import { publicInstructorsPanelSize, publicInstructorsProvider } from "@/lib/appMode";
 import { providerModel } from "@/lib/answerProviders";
 import { logSearch } from "@/lib/searchLogging";
 import { clientSafeError, logWorkflowError } from "@/lib/workflowErrors";
@@ -32,7 +32,6 @@ import type { RagInstructorCompareResponse, RagStoredInstructorCompareRun } from
 
 export const runtime = "nodejs";
 
-const INSTRUCTOR_COUNT = 3;
 const MIN_QUERY = 3;
 const MAX_QUERY = 300;
 
@@ -137,7 +136,7 @@ export async function POST(request: NextRequest) {
         : await runInstructorComparisonStreamed({
           threadId: activeThreadId,
           query,
-          instructorCount: INSTRUCTOR_COUNT,
+          instructorCount: publicInstructorsPanelSize(),
           provider,
           onProgress,
         });
