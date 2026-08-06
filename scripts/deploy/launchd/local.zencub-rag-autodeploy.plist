@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Description: Every 5 minutes, redeploys zencub-rag when origin/main has moved or the running servers are behind the checkout. Polls rather than exposing an inbound deploy endpoint, and logs only real deploys - a quiet log means idle, not stopped. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

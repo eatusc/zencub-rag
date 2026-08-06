@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Description: ZenCub instructor-comparison site on 127.0.0.1:3420 (APP_MODE=instructors), the third production surface from scripts/deploy/serve.sh alongside public :3418 and demo :3419. Answers run on OpenAI gpt-4o-mini rather than local Qwen, because a comparison is a dozen model calls and Qwen would hold the machine's only Ollama instance for ~10 minutes each. Capped at 500 comparisons a day (about $3); past that the page says so instead of failing oddly. Loopback-only, so the sole way in is the Cloudflare Tunnel. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
