@@ -28,6 +28,7 @@ docs/evals/*.json
 
 # Production build outputs for the two Cloudflare Tunnel deployments
 .next-public/
+.next-instructors/
 .next-demo/
 
 # Demo PIN + cookie secret for the full deployment

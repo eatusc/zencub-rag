@@ -66,8 +66,9 @@ fi
 
 DEPLOY_WILL_RESTART=1 ./scripts/deploy/build.sh
 
-echo "==> Restarting both surfaces"
+echo "==> Restarting all surfaces"
 launchctl kickstart -k "gui/$UID_NUM/local.zencub-rag-public"
+launchctl kickstart -k "gui/$UID_NUM/local.zencub-rag-instructors"
 launchctl kickstart -k "gui/$UID_NUM/local.zencub-rag-demo"
 
 # Verify against the stamp rather than a 200, so a server that came back up on
@@ -79,6 +80,17 @@ for _ in $(seq 1 30); do
     | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p')" || live=""
   if [ "$live" = "$expected" ]; then
     echo "==> public 3418 live on $live"
+
+    # The instructors surface exposes /api/health too, so it is checked against
+    # the same stamp rather than a bare 200.
+    instructors="$(curl -fsS --max-time 5 http://127.0.0.1:3420/api/health 2>/dev/null \
+      | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p')" || instructors=""
+    if [ "$instructors" != "$expected" ]; then
+      echo "deployed, but instructors 3420 reports '${instructors:-unreachable}', not $expected" >&2
+      exit 1
+    fi
+    echo "==> instructors 3420 live on $instructors"
+
     # The demo answers 401 on /api/health by design (the PIN gate fails closed),
     # so its liveness check is the unlock page instead.
     if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3419/unlock; then

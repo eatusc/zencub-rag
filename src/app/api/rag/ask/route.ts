@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
-import { generateAnswer, probeQwen, providerModel } from "@/lib/answerProviders";
+import { generateAnswer, openaiFor, probeQwen, providerModel } from "@/lib/answerProviders";
 import { isPublicMode, publicAskProvider } from "@/lib/appMode";
 import { getServerEnv } from "@/lib/env";
 import { normalizeProvider, type AnswerProvider } from "@/lib/providers";
@@ -125,7 +124,7 @@ export async function POST(request: NextRequest) {
     // Retrieval (embeddings + rerank) always runs on OpenAI; the provider choice
     // only swaps the model that writes the final answer. Without an OpenAI key we
     // degrade to text-only search and skip reranking so local providers still work.
-    const openai = hasOpenai ? new OpenAI({ apiKey: env.openaiApiKey }) : null;
+    const openai = hasOpenai ? openaiFor(env) : null;
     const retrievalQuery = conversation.length > 0
       ? [...conversation.map((turn) => turn.question), query].join(" | ").slice(0, 2_000)
       : query;

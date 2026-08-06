@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isPublicApiRoute } from "@/lib/appMode";
+import {
+  isInstructorsApiRoute,
+  isInstructorsPagePath,
+  isPublicApiRoute,
+  publicInstructorsProvider,
+} from "@/lib/appMode";
 import { issueDemoCookie, timingSafeEqual, verifyDemoCookie } from "@/lib/demoAuth";
 import {
   LIMITS,
   checkRateLimit,
   clientIp,
   consumeDailyAskBudget,
+  consumeDailyCompareBudget,
   resetRateLimits,
 } from "@/lib/rateLimit";
 
@@ -145,5 +151,56 @@ describe("consumeDailyAskBudget", () => {
 
     vi.setSystemTime(new Date("2026-07-28T00:05:00Z"));
     expect(consumeDailyAskBudget().allowed).toBe(true);
+  });
+});
+
+describe("instructors surface gating", () => {
+  it("exposes only the comparison workflow and health", () => {
+    expect(isInstructorsApiRoute("/api/instructors/compare")).toBe(true);
+    expect(isInstructorsApiRoute("/api/instructors/runs")).toBe(true);
+    expect(isInstructorsApiRoute("/api/health")).toBe(true);
+  });
+
+  it("does not expose the demo's compare route, which takes a caller-chosen provider", () => {
+    expect(isInstructorsApiRoute("/api/rag/instructor-compare")).toBe(false);
+    expect(isInstructorsApiRoute("/api/rag/graph-follow-up")).toBe(false);
+    expect(isInstructorsApiRoute("/api/rag/ask")).toBe(false);
+    expect(isInstructorsApiRoute("/api/langfuse/traces")).toBe(false);
+    expect(isInstructorsApiRoute("/api/instructors/compare/../rag/ask")).toBe(false);
+  });
+
+  it("serves the landing page and comparison permalinks only", () => {
+    expect(isInstructorsPagePath("/")).toBe(true);
+    expect(isInstructorsPagePath("/c/9a401113-f954-4ef4-9213-f8b29914b32f")).toBe(true);
+    expect(isInstructorsPagePath("/c/not-a-uuid")).toBe(false);
+    expect(isInstructorsPagePath("/unlock")).toBe(false);
+    expect(isInstructorsPagePath("/c/9a401113-f954-4ef4-9213-f8b29914b32f/edit")).toBe(false);
+  });
+
+  it("pins the provider server-side, ignoring anything a caller could send", () => {
+    delete process.env.RAG_INSTRUCTORS_PROVIDER;
+    expect(publicInstructorsProvider()).toBe("openai");
+    process.env.RAG_INSTRUCTORS_PROVIDER = "openrouter";
+    expect(publicInstructorsProvider()).toBe("openrouter");
+    // Claude spawns a CLI process per call, so it is not selectable here.
+    process.env.RAG_INSTRUCTORS_PROVIDER = "claude";
+    expect(publicInstructorsProvider()).toBe("openai");
+    delete process.env.RAG_INSTRUCTORS_PROVIDER;
+  });
+});
+
+describe("consumeDailyCompareBudget", () => {
+  it("meters comparisons separately from asks", () => {
+    process.env.RAG_INSTRUCTORS_DAILY_BUDGET = "2";
+    process.env.RAG_PUBLIC_DAILY_ASK_BUDGET = "1";
+
+    expect(consumeDailyCompareBudget().allowed).toBe(true);
+    expect(consumeDailyAskBudget().allowed).toBe(true);
+    // The ask budget is spent; the comparison budget still has one left.
+    expect(consumeDailyAskBudget().allowed).toBe(false);
+    expect(consumeDailyCompareBudget().allowed).toBe(true);
+    expect(consumeDailyCompareBudget().allowed).toBe(false);
+
+    delete process.env.RAG_INSTRUCTORS_DAILY_BUDGET;
   });
 });

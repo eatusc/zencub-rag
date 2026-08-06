@@ -25,10 +25,36 @@ case "$MODE" in
     # so one reader can spend 6. Roughly $2/day at OpenRouter prices.
     export RAG_PUBLIC_DAILY_ASK_BUDGET="${RAG_PUBLIC_DAILY_ASK_BUDGET:-2000}"
     ;;
+  instructors)
+    export APP_MODE=instructors
+    export NEXT_DIST_DIR=.next-instructors
+    export PORT=3420
+    # Public host, so the same rule as search: no LangGraph test surface.
+    export LANGGRAPH_TEST_MODE=off
+    # Pinned rather than inherited. The workflow is a dozen model calls, so
+    # local Qwen would hold the machine's only Ollama instance for about ten
+    # minutes per comparison, and the model this site is priced around is
+    # gpt-4o-mini. Both are set here so a change to .env.local cannot quietly
+    # re-point the public app at a different model or a different bill.
+    export RAG_INSTRUCTORS_PROVIDER="${RAG_INSTRUCTORS_PROVIDER:-openai}"
+    export RAG_ANSWER_MODEL="${RAG_ANSWER_MODEL:-gpt-4o-mini}"
+    export RAG_RERANK_MODEL="${RAG_RERANK_MODEL:-gpt-4o-mini}"
+    # Site-wide ceiling on comparisons per day. At roughly $0.006 a run this is
+    # about $3/day. When it trips, the page says so rather than failing oddly.
+    export RAG_INSTRUCTORS_DAILY_BUDGET="${RAG_INSTRUCTORS_DAILY_BUDGET:-500}"
+    # Two targeted-retrieval rounds is the demo value; the public app is
+    # latency-sensitive and the gate now stops on its own when a round achieves
+    # nothing, so this only bounds the worst case.
+    export RAG_COMPARE_MAX_REFINEMENT_ROUNDS="${RAG_COMPARE_MAX_REFINEMENT_ROUNDS:-2}"
+    ;;
   demo)
     export APP_MODE=full
     export NEXT_DIST_DIR=.next-demo
     export PORT=3419
+    # The demo is a tunnelled public host, not a test rig. Without this it
+    # inherits LANGGRAPH_TEST_MODE=on from .env.local, which is what a PIN
+    # holder needs to inject failures, replay checkpoints, and write notes.
+    export LANGGRAPH_TEST_MODE=off
     # DEMO_PIN and DEMO_SECRET live here; without them the demo fails closed.
     if [ -f scripts/deploy/prod.env ]; then
       set -a
@@ -38,7 +64,7 @@ case "$MODE" in
     fi
     ;;
   *)
-    echo "usage: $0 <public|demo>" >&2
+    echo "usage: $0 <public|instructors|demo>" >&2
     exit 64
     ;;
 esac

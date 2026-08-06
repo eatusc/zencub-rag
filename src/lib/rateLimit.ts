@@ -17,6 +17,11 @@ export const LIMITS = {
   // A short PIN is brute-forceable without this; 5 tries per 10 minutes puts a
   // six-digit space far out of reach.
   unlock: { max: 5, windowMs: 600_000 },
+  // A comparison is about a dozen model calls and takes roughly a minute of
+  // server time, so it is metered per run rather than per minute. Five in ten
+  // minutes is more than any reader working through a topic will use, and far
+  // below what a script would want.
+  compare: { max: 5, windowMs: 600_000 },
 } as const;
 
 export type LimitName = keyof typeof LIMITS;
@@ -85,32 +90,48 @@ export function checkRateLimit(name: LimitName, ip: string): RateLimitResult {
 // At roughly $0.001 a call on OpenRouter this ceiling is about $2/day.
 const DEFAULT_DAILY_ASK_BUDGET = 2_000;
 
-let askDay = "";
-let askCount = 0;
+// A comparison runs about a dozen gpt-4o-mini calls, measured at 27.5k input
+// and 3k output tokens, so roughly $0.006 each. 500/day is about $3/day.
+const DEFAULT_DAILY_COMPARE_BUDGET = 500;
 
-function dailyAskBudget(): number {
-  const configured = Number(process.env.RAG_PUBLIC_DAILY_ASK_BUDGET);
-  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_DAILY_ASK_BUDGET;
+type DailyCounter = { day: string; used: number };
+
+const dailyCounters: Record<"ask" | "compare", DailyCounter> = {
+  ask: { day: "", used: 0 },
+  compare: { day: "", used: 0 },
+};
+
+function consumeDaily(name: "ask" | "compare", budget: number) {
+  const counter = dailyCounters[name];
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (today !== counter.day) {
+    counter.day = today;
+    counter.used = 0;
+  }
+
+  if (counter.used >= budget) return { allowed: false, used: counter.used, budget };
+
+  counter.used += 1;
+  return { allowed: true, used: counter.used, budget };
+}
+
+function configuredBudget(variable: string, fallback: number): number {
+  const configured = Number(process.env[variable]);
+  return Number.isFinite(configured) && configured > 0 ? configured : fallback;
 }
 
 export function consumeDailyAskBudget(): { allowed: boolean; used: number; budget: number } {
-  const budget = dailyAskBudget();
-  const today = new Date().toISOString().slice(0, 10);
+  return consumeDaily("ask", configuredBudget("RAG_PUBLIC_DAILY_ASK_BUDGET", DEFAULT_DAILY_ASK_BUDGET));
+}
 
-  if (today !== askDay) {
-    askDay = today;
-    askCount = 0;
-  }
-
-  if (askCount >= budget) return { allowed: false, used: askCount, budget };
-
-  askCount += 1;
-  return { allowed: true, used: askCount, budget };
+export function consumeDailyCompareBudget(): { allowed: boolean; used: number; budget: number } {
+  return consumeDaily("compare", configuredBudget("RAG_INSTRUCTORS_DAILY_BUDGET", DEFAULT_DAILY_COMPARE_BUDGET));
 }
 
 // Exposed for tests; the sliding window otherwise leaks state between cases.
 export function resetRateLimits() {
   buckets.clear();
-  askDay = "";
-  askCount = 0;
+  dailyCounters.ask = { day: "", used: 0 };
+  dailyCounters.compare = { day: "", used: 0 };
 }

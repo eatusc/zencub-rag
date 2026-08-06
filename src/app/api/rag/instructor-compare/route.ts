@@ -17,6 +17,7 @@ import {
 } from "@/lib/langgraph/instructorCompareGraph";
 import { normalizeProvider } from "@/lib/providers";
 import { logSearch } from "@/lib/searchLogging";
+import { clientSafeError, logWorkflowError } from "@/lib/workflowErrors";
 import type {
   RagInstructorComparePausedResponse,
   RagInstructorCompareResponse,
@@ -133,7 +134,8 @@ export async function GET(request: NextRequest) {
   try {
     return NextResponse.json(await listInstructorCompareRuns({ limit, offset, provider }));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Instructor comparison history failed." }, { status: 500 });
+    logWorkflowError("instructor-compare-history", error);
+    return NextResponse.json({ error: "Instructor comparison history failed." }, { status: 500 });
   }
 }
 
@@ -209,7 +211,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unknown Instructor Compare action." }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown comparison error";
-    return NextResponse.json({ error: message.replace(/^INSUFFICIENT_INSTRUCTORS:\s*/, ""), thread_id: existingThreadId, session_token: token || undefined, recoverable: action !== "run" }, {
+    logWorkflowError("instructor-compare", error);
+    return NextResponse.json({ error: clientSafeError(message, env.langGraphTestMode), thread_id: existingThreadId, session_token: token || undefined, recoverable: action !== "run" }, {
       status: message.startsWith("INSUFFICIENT_INSTRUCTORS") ? 422 : 500,
     });
   }

@@ -1,11 +1,12 @@
 # Deployment
 
-Two public surfaces are served from this one codebase, both from the Mac Studio
+Three surfaces are served from this one codebase, all from the Mac Studio
 through a Cloudflare Tunnel. Nothing about this changes the local dev server.
 
 | Surface | Host | Port | `APP_MODE` | Build dir |
 | --- | --- | --- | --- | --- |
 | Public search | `search.zencub.com` | 3418 | `public` | `.next-public` |
+| Public compare | `instructors.zencub.com` | 3420 | `instructors` | `.next-instructors` |
 | Full demo | `demo.zencub.com` | 3419 | `full` | `.next-demo` |
 | Local dev | `mac-studio.rove-porgy.ts.net:3417` | 3417 | `full` | `.next` |
 
@@ -18,8 +19,9 @@ directory, and the PIN gate is skipped outside `NODE_ENV=production`.
 ./scripts/deploy/deploy.sh
 ```
 
-That is the whole procedure: fast-forward `main`, build both surfaces, restart
-both, then block until the public surface reports the new commit. It refuses to
+That is the whole procedure: fast-forward `main`, build every surface, restart
+them all, then block until the public and instructors surfaces report the new
+commit. It refuses to
 run on a branch other than `main` or with uncommitted changes, so a deploy can
 never ship something that is not on `origin/main`, and never discards work in
 progress to get there. `next-env.d.ts` is exempt from that check because every
@@ -30,7 +32,8 @@ scheduled one cannot build into the same directories at once. A lock left behind
 by a killed deploy is reclaimed automatically once its process is gone.
 
 Build and restart are one step on purpose. `build.sh` writes into
-`.next-public` and `.next-demo` while the old servers are still reading them, so
+`.next-public`, `.next-instructors`, and `.next-demo` while the old servers are
+still reading them, so
 the gap between building and restarting is a window where a running server can
 fail on a chunk that no longer matches its manifest. Running `build.sh` alone is
 still supported for a build-only check; it now says plainly that the servers are
@@ -41,7 +44,8 @@ still on the old build.
 Every build stamps its commit into the bundle, and `/api/health` reports it:
 
 ```bash
-curl -s http://127.0.0.1:3418/api/health
+curl -s http://127.0.0.1:3418/api/health   # public search
+curl -s http://127.0.0.1:3420/api/health   # instructors
 # {"ok":true,"build":{"sha":"0d694bf","built_at":"..."},"chunks":12104}
 ```
 
@@ -96,7 +100,52 @@ deployment also pins `LANGGRAPH_TEST_MODE=off` and ignores any `provider` in an
 Ask request body, because `claude` spawns a CLI process per call and `openai`
 spends money.
 
-`APP_MODE=full` serves everything, behind a PIN.
+`APP_MODE=instructors` renders `InstructorsApp` and allows only:
+
+- `/api/instructors/compare` (start a comparison, poll a running one)
+- `/api/instructors/runs` (recent comparisons, and one by id)
+- `/api/health`
+
+Page paths are limited to `/` and `/c/<uuid>`; anything else redirects home.
+The demo's own `/api/rag/instructor-compare` is **not** exposed here, because
+that route accepts a caller-chosen provider and a test-mode failure slug. This
+surface pins the provider and the model server-side in `serve.sh`, fixes the
+panel at three instructors, and has no test-mode surface at all.
+
+`APP_MODE=full` serves everything, behind a PIN. It also pins
+`LANGGRAPH_TEST_MODE=off`: without that it inherits `on` from `.env.local`,
+which is what a PIN holder would need to inject failures into live graphs,
+replay checkpoints, and write rows through `/api/rag/graph-note`.
+
+## The comparison workflow as a public app
+
+`instructors.zencub.com` runs the same checkpointed LangGraph workflow the demo
+runs, with two differences that matter in production.
+
+**It does not answer in one request.** A comparison takes roughly 30 seconds on
+gpt-4o-mini and was measured at 114 seconds on Qwen3 235B, while Cloudflare cuts
+an origin response off at 100 seconds and returns 524. So `POST` starts the
+workflow as a background job and returns a `thread_id`; the browser polls `GET`
+about once a second. `src/lib/instructorCompareJobs.ts` holds the live view in
+process, capped at four concurrent runs. The durable copies are the LangGraph
+checkpoint and the stored run row, so a restart mid-run costs a spinner rather
+than a result.
+
+**The poll is the interface.** `runInstructorComparisonStreamed` streams graph
+state after every superstep, and the trace channel is append-only, so each poll
+returns every node that has finished. The UI draws retrieval fanning out, one
+analysis branch per instructor, those branches converging into a single
+synthesis, and each claim being verified on its own. Nothing about that display
+is scripted; the node ids come from the execution.
+
+Follow-ups run on the same thread, so turn two reuses the approved panel out of
+the checkpoint instead of retrieving from scratch. That needs the capability
+token minted when the thread was created, which is why a `thread_id` alone gets
+a 403.
+
+Finished runs are stored in `rag_instructor_compare_runs` with
+`result->>surface = 'instructors'`. The listing and the permalink both filter on
+that, so nothing typed into the internal demo can appear on the public site.
 
 ## Abuse and cost controls
 
@@ -107,8 +156,21 @@ Layered, since the public host is anonymous:
 | Per-IP ask limit | `src/lib/rateLimit.ts` | 10/min |
 | Per-IP search limit | `src/lib/rateLimit.ts` | 60/min |
 | Per-IP unlock attempts | `src/lib/rateLimit.ts` | 5 per 10 min |
+| Per-IP comparison limit | `src/lib/rateLimit.ts` | 5 per 10 min |
+| Concurrent comparisons | `src/lib/instructorCompareJobs.ts` | 4 |
 | Site-wide daily ask budget | `RAG_PUBLIC_DAILY_ASK_BUDGET` | 2,000/day |
+| Site-wide daily comparison budget | `RAG_INSTRUCTORS_DAILY_BUDGET` | 500/day |
 | Public answer model | `RAG_PUBLIC_ASK_PROVIDER` | `openrouter` |
+| Public comparison model | `RAG_INSTRUCTORS_PROVIDER` | `openai` (gpt-4o-mini) |
+
+The per-IP comparison limit also applies to the demo's workflow routes
+(`/api/rag/instructor-compare`, `/api/rag/graph-ask`, `/api/rag/graph-follow-up`).
+Before that, the PIN was the only thing between a shared demo link and
+unbounded model spend.
+
+A comparison is about a dozen model calls, measured at 27.5k input and 3k output
+tokens, so roughly $0.006 on gpt-4o-mini. The 500/day ceiling is about $3/day.
+When it trips, the page says so plainly.
 
 In-process counters are sufficient here because each surface is a single
 long-lived `next start` process, not serverless functions. Per-IP limits alone
@@ -210,10 +272,11 @@ immediately instead of getting a targeted-retrieval attempt.
 npm run typecheck && npm run lint && npm test
 ./scripts/deploy/build.sh
 launchctl kickstart -k gui/$(id -u)/local.zencub-rag-public
+launchctl kickstart -k gui/$(id -u)/local.zencub-rag-instructors
 launchctl kickstart -k gui/$(id -u)/local.zencub-rag-demo
 ```
 
-`build.sh` builds twice, because `APP_MODE` is inlined into the middleware
+`build.sh` builds three times, because `APP_MODE` is inlined into the middleware
 bundle at build time and because the dev server keeps rewriting plain `.next`.
 
 ## First-time setup
@@ -224,6 +287,7 @@ Install the launchd agents (they restart on crash and at login):
 mkdir -p ~/Library/Logs/zencub-rag
 cp scripts/deploy/launchd/*.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.zencub-rag-public.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.zencub-rag-instructors.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.zencub-rag-demo.plist
 ```
 
@@ -238,20 +302,26 @@ above the catch-all:
     service: http://127.0.0.1:3418
   - hostname: demo.zencub.com
     service: http://127.0.0.1:3419
+  - hostname: instructors.zencub.com
+    service: http://127.0.0.1:3420
 ```
 
 Then create the DNS records and restart the tunnel:
 
 ```bash
-cloudflared tunnel route dns mac-studio-public search.zencub.com
-cloudflared tunnel route dns mac-studio-public demo.zencub.com
+~/.cloudflared/route-dns mac-studio-public search.zencub.com
+~/.cloudflared/route-dns mac-studio-public demo.zencub.com
+~/.cloudflared/route-dns mac-studio-public instructors.zencub.com
 launchctl kickstart -k gui/$(id -u)/local.mac-studio-public-cloudflared
 ```
 
-`cloudflared tunnel route dns` needs the `zencub.com` account certificate at
-`~/.cloudflared/cert.pem`; that path holds several accounts' certs under
-different suffixes, so check it points at the zencub one first. Creating the
-CNAMEs by hand in the Cloudflare dashboard works just as well.
+Use the `route-dns` wrapper, not `cloudflared tunnel route dns` directly. The
+raw command uses whichever `~/.cloudflared/cert.pem` is active, and when the
+hostname is not in that cert's zone it does not fail: it creates
+`instructors.zencub.com.helpaproduct.com` instead, which can never serve traffic
+because Cloudflare's universal certificate covers only one level of subdomain.
+The wrapper resolves each cert to its real zone and picks the right one. See
+`~/.cloudflared/README.md`.
 
 Both servers bind to `127.0.0.1`, so the tunnel is the only way in: the ports
 are not reachable over the LAN or Tailscale.

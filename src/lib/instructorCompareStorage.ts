@@ -15,8 +15,14 @@ function storedRun(row: StoredRow): RagStoredInstructorCompareRun | null {
   return { ...result, stored_run_id: row.id, stored_at: row.created_at };
 }
 
-export async function storeInstructorCompareRun(result: RagInstructorCompareResponse): Promise<RagStoredInstructorCompareRun> {
-  const { session_token: _sessionToken, ...safeResult } = result;
+export async function storeInstructorCompareRun(
+  result: RagInstructorCompareResponse,
+  options?: { surface?: "instructors" },
+): Promise<RagStoredInstructorCompareRun> {
+  const { session_token: _sessionToken, ...rest } = result;
+  // The capability token is stripped before storage; the surface marker is
+  // added so each deployment can list only its own runs.
+  const safeResult = options?.surface ? { ...rest, surface: options.surface } : rest;
   const supabase = createServerSupabase();
   const { data, error } = await supabase
     .from("rag_instructor_compare_runs")
@@ -44,6 +50,60 @@ export async function storeInstructorCompareRun(result: RagInstructorCompareResp
   const run = storedRun(data as StoredRow);
   if (!run) throw new Error("Instructor comparison storage returned an invalid result.");
   return run;
+}
+
+// Compact card for the public "recent comparisons" strip. The full result is
+// large (every citation, the whole trace, per-call token accounting), so this
+// projects only what a card shows and leaves the rest for the permalink.
+export type InstructorCompareCard = {
+  id: string;
+  created_at: string;
+  query: string;
+  topic: string;
+  instructors: string[];
+  shared_principle_count: number;
+  difference_count: number;
+};
+
+function card(row: StoredRow): InstructorCompareCard | null {
+  const run = storedRun(row);
+  if (!run) return null;
+  return {
+    id: run.stored_run_id,
+    created_at: run.stored_at,
+    query: run.query,
+    topic: run.comparison.topic,
+    instructors: run.comparison.instructors.map((instructor) => instructor.creator_name),
+    shared_principle_count: run.comparison.shared_principles.length,
+    difference_count: run.comparison.important_differences.length,
+  };
+}
+
+export async function listPublicComparisonCards(limit: number): Promise<InstructorCompareCard[]> {
+  const { data, error } = await createServerSupabase()
+    .from("rag_instructor_compare_runs")
+    .select("id,created_at,result")
+    // Runs from the internal demo stay internal: this lists only what the
+    // public instructors app produced.
+    .eq("result->>surface", "instructors")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Recent comparisons failed: ${error.message}`);
+  return ((data ?? []) as StoredRow[]).flatMap((row) => {
+    const item = card(row);
+    return item ? [item] : [];
+  });
+}
+
+export async function getPublicComparison(id: string): Promise<RagStoredInstructorCompareRun | null> {
+  const { data, error } = await createServerSupabase()
+    .from("rag_instructor_compare_runs")
+    .select("id,created_at,result")
+    .eq("id", id)
+    .eq("result->>surface", "instructors")
+    .maybeSingle();
+  if (error) throw new Error(`Comparison lookup failed: ${error.message}`);
+  return data ? storedRun(data as StoredRow) : null;
 }
 
 export async function listInstructorCompareRuns(input: {

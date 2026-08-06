@@ -93,19 +93,40 @@ function extractJson(text: string): unknown {
   }
 }
 
+// Without an explicit timeout the SDK waits forever, so one hung provider
+// holds the HTTP request, its LangGraph checkpoint, and a socket open with
+// nothing to release them. Local Qwen is slow by nature (~45s a call), so it
+// gets a much longer ceiling than the hosted providers rather than no ceiling.
+const PROVIDER_TIMEOUT_MS: Record<Exclude<AnswerProvider, "claude">, number> = {
+  qwen: 240_000,
+  openrouter: 90_000,
+  openai: 90_000,
+};
+
+// One place to build an OpenAI client so every call site inherits the timeout
+// and retry policy. Retries are the SDK default of 2 on connection errors and
+// 429/5xx only; a timed-out request is not retried, because a workflow that
+// already spent 90 seconds should surface that rather than spend 90 more.
+export function openaiFor(env: ServerEnv, timeoutMs = PROVIDER_TIMEOUT_MS.openai): OpenAI {
+  return new OpenAI({ apiKey: env.openaiApiKey, timeout: timeoutMs });
+}
+
 function openAICompatibleClient(provider: AnswerProvider, env: ServerEnv, openaiClient?: OpenAI | null): OpenAI {
-  if (provider === "qwen") return new OpenAI({ baseURL: env.ragQwenBaseUrl, apiKey: "ollama" });
+  if (provider === "qwen") {
+    return new OpenAI({ baseURL: env.ragQwenBaseUrl, apiKey: "ollama", timeout: PROVIDER_TIMEOUT_MS.qwen });
+  }
   if (provider === "openrouter") {
     return new OpenAI({
       baseURL: env.ragOpenRouterBaseUrl,
       apiKey: env.openRouterApiKey,
+      timeout: PROVIDER_TIMEOUT_MS.openrouter,
       defaultHeaders: {
         "HTTP-Referer": "https://github.com/eatusc/zencub-rag",
         "X-Title": "ZenCub RAG",
       },
     });
   }
-  return openaiClient ?? new OpenAI({ apiKey: env.openaiApiKey });
+  return openaiClient ?? openaiFor(env);
 }
 
 export async function generateStructuredJson(
@@ -236,7 +257,7 @@ export async function generateAnswer(
     const client = openAICompatibleClient(provider, env);
     return generateViaOpenAICompatible(query, sources, client, env.ragOpenRouterModel, conversation);
   }
-  const client = openaiClient ?? new OpenAI({ apiKey: env.openaiApiKey });
+  const client = openaiClient ?? openaiFor(env);
   return generateViaOpenAICompatible(query, sources, client, env.ragAnswerModel, conversation);
 }
 

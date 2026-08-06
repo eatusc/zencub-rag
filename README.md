@@ -6,11 +6,18 @@ ZenCub RAG answers questions about a BJJ (Brazilian Jiu-Jitsu) video library wit
 
 ![ZenCub RAG: LangGraph RAG over a BJJ video library](docs/media/social-preview.png)
 
-**Live: [search.zencub.com](https://search.zencub.com)** is the public transcript
-search surface (full-text, semantic, and cited answers). The full engineering
-demo with the LangGraph workflows, Instructor Compare, and Langfuse traces runs
-at [demo.zencub.com](https://demo.zencub.com) behind a PIN. Both are served from
-one codebase; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+**Live:**
+
+- [search.zencub.com](https://search.zencub.com) is the public transcript search
+  surface (full-text, semantic, and cited answers).
+- [instructors.zencub.com](https://instructors.zencub.com) is the public
+  Instructor Compare app: one question, one button, and the LangGraph workflow
+  running live while you watch it fan out and converge.
+- [demo.zencub.com](https://demo.zencub.com) is the full engineering demo behind
+  a PIN, with the LangGraph labs, checkpoint replay, and Langfuse traces.
+
+All three are served from one codebase; see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Engineering highlights
 

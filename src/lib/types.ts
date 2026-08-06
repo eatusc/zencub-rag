@@ -198,6 +198,11 @@ export type RagInstructorCompareResponse = {
   engine: "langgraph";
   thread_id: string;
   session_token?: string;
+  // Which deployment produced this run. Stored inside the result JSON so the
+  // public instructors app can list its own comparisons without also showing
+  // whatever was typed into the internal demo. Absent on runs stored before
+  // this existed, which is why the listing filters on it explicitly.
+  surface?: "instructors";
   provider: import("@/lib/providers").AnswerProvider;
   model: string;
   models: {

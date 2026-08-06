@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
+import { openaiFor } from "@/lib/answerProviders";
 import { getServerEnv } from "@/lib/env";
 import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { logSearch } from "@/lib/searchLogging";
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Missing OPENAI_API_KEY." }, { status: 500 });
     }
 
-    const openai = new OpenAI({ apiKey: env.openaiApiKey });
+    const openai = openaiFor(env);
     const embedding = await openai.embeddings.create({
       model: env.ragEmbeddingModel,
       input: query,

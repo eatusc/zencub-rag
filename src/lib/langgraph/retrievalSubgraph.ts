@@ -1,6 +1,6 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import OpenAI from "openai";
+import { openaiFor } from "@/lib/answerProviders";
 import { getServerEnv } from "@/lib/env";
 import {
   contextResults,
@@ -56,7 +56,7 @@ async function vectorNode(state: State): Promise<Partial<State>> {
     return { vector: [], trace: [trace("retrieve_vector", "Vector search", "unavailable without OPENAI_API_KEY", startedAt)] };
   }
   try {
-    const openai = new OpenAI({ apiKey: env.openaiApiKey });
+    const openai = openaiFor(env);
     const rows = filterDegenerate(await vectorResults(state.query, CANDIDATE_POOL, openai, env));
     return { vector: rows, trace: [trace("retrieve_vector", "Vector search", `${rows.length} semantic candidates`, startedAt)] };
   } catch (error) {
@@ -151,7 +151,7 @@ async function rerankNode(state: State): Promise<Partial<State>> {
     }
   }
   const env = getServerEnv();
-  const openai = env.openaiApiKey ? new OpenAI({ apiKey: env.openaiApiKey }) : null;
+  const openai = env.openaiApiKey ? openaiFor(env) : null;
   const { reranked, didRerank } = await rerankCandidates(state.query, state.candidates, openai, env);
   return {
     reranked,

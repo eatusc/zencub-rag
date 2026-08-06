@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
+import { openaiFor } from "@/lib/answerProviders";
 import { getServerEnv } from "@/lib/env";
 import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { asNumber, formatRagSource } from "@/lib/ragUtils";
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No sources found to analyze." }, { status: 404 });
     }
 
-    const openai = new OpenAI({ apiKey: env.openaiApiKey });
+    const openai = openaiFor(env);
     const completion = await openai.chat.completions.create({
       model: env.ragAnalyzeModel,
       temperature: 0.2,

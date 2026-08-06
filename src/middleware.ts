@@ -1,10 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getAppMode, isPublicApiRoute } from "@/lib/appMode";
+import {
+  getAppMode,
+  isInstructorsApiRoute,
+  isInstructorsPagePath,
+  isPublicApiRoute,
+} from "@/lib/appMode";
 import { DEMO_COOKIE, demoCredentials, verifyDemoCookie } from "@/lib/demoAuth";
 import {
   checkRateLimit,
   clientIp,
   consumeDailyAskBudget,
+  consumeDailyCompareBudget,
   type LimitName,
 } from "@/lib/rateLimit";
 
@@ -13,6 +19,15 @@ import {
 const MODE = getAppMode();
 
 const UNLOCK_PATHS = new Set(["/unlock", "/api/unlock"]);
+
+// Workflow routes on the demo surface. Each of these runs a LangGraph workflow
+// worth many model calls, and none of them were metered before: the PIN was the
+// only thing between a shared demo link and unbounded spend.
+const WORKFLOW_PATHS = new Set([
+  "/api/rag/instructor-compare",
+  "/api/rag/graph-ask",
+  "/api/rag/graph-follow-up",
+]);
 
 function rateLimitFor(pathname: string): LimitName | null {
   if (pathname === "/api/rag/ask") return "ask";
@@ -63,6 +78,42 @@ function publicMiddleware(request: NextRequest) {
   return NextResponse.next();
 }
 
+function instructorsMiddleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  if (pathname.startsWith("/api") && !isInstructorsApiRoute(pathname)) {
+    return new NextResponse(null, { status: 404 });
+  }
+
+  // Only a started comparison is metered. The GET on the same path is the
+  // browser polling a run it already paid for, at roughly one request a
+  // second, and metering that would throttle the progress display itself.
+  if (pathname === "/api/instructors/compare" && request.method === "POST") {
+    const result = checkRateLimit("compare", clientIp(request.headers));
+    if (!result.allowed) return tooManyRequests(result.retryAfterSeconds);
+
+    // Per-IP limits do not bound spend, because a botnet is many addresses.
+    // This is the number that caps the bill.
+    if (!consumeDailyCompareBudget().allowed) {
+      return NextResponse.json(
+        { error: "Comparisons have hit their daily limit. Try again tomorrow." },
+        { status: 429 },
+      );
+    }
+  }
+
+  if (pathname === "/api/instructors/runs") {
+    const result = checkRateLimit("search", clientIp(request.headers));
+    if (!result.allowed) return tooManyRequests(result.retryAfterSeconds);
+  }
+
+  if (!pathname.startsWith("/api") && !isInstructorsPagePath(pathname)) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  return NextResponse.next();
+}
+
 async function fullMiddleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -104,11 +155,18 @@ async function fullMiddleware(request: NextRequest) {
     if (!result.allowed) return tooManyRequests(result.retryAfterSeconds);
   }
 
+  if (WORKFLOW_PATHS.has(pathname) && request.method === "POST") {
+    const result = checkRateLimit("compare", clientIp(request.headers));
+    if (!result.allowed) return tooManyRequests(result.retryAfterSeconds);
+  }
+
   return NextResponse.next();
 }
 
 export function middleware(request: NextRequest) {
-  return MODE === "public" ? publicMiddleware(request) : fullMiddleware(request);
+  if (MODE === "public") return publicMiddleware(request);
+  if (MODE === "instructors") return instructorsMiddleware(request);
+  return fullMiddleware(request);
 }
 
 export const config = {

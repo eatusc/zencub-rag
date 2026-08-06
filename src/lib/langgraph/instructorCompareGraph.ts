@@ -1,7 +1,6 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { Annotation, Command, END, Send, START, StateGraph, interrupt } from "@langchain/langgraph";
-import OpenAI from "openai";
-import { generateStructuredJson } from "@/lib/answerProviders";
+import { generateStructuredJson, openaiFor } from "@/lib/answerProviders";
 import { DEFAULT_COMPARE_MAX_REFINEMENT_ROUNDS, getServerEnv } from "@/lib/env";
 import {
   attributeCandidates,
@@ -75,6 +74,11 @@ const CompareState = Annotation.Root({
     default: () => DEFAULT_COMPARE_MAX_REFINEMENT_ROUNDS,
   }),
   qualityGaps: Annotation<string[]>(replace<string[]>(() => [])),
+  // Gap count the previous panel assessment saw, so the next one can tell
+  // whether a refinement round achieved anything. Null before the first
+  // assessment; older checkpoints simply default to null and refine as before.
+  previousGapCount: Annotation<number | null>({ reducer: (_p, n) => n, default: () => null }),
+  refinementProductive: Annotation<boolean>({ reducer: (_p, n) => n, default: () => true }),
   panelStatus: Annotation<"pending" | "approved" | "edited" | "rejected">({ reducer: (_p, n) => n, default: () => "pending" }),
   excludedClipIds: Annotation<number[]>(replace<number[]>(() => [])),
   // Stable row IDs behind excludedClipIds, so a reviewer's removals survive a
@@ -148,6 +152,8 @@ function initializeNode(state: State): Partial<State> {
     analysisStartIndex: state.analyses.length,
     refinementRound: 0,
     qualityGaps: [],
+    previousGapCount: null,
+    refinementProductive: true,
     panelStatus: "pending",
     excludedClipIds: [],
     excludedClipRowIds: [],
@@ -173,6 +179,31 @@ function strings(value: unknown, limit: number): string[] {
     : [];
 }
 
+// Same, but tolerant of the shape models reach for when a field is described as
+// guidance rather than a list of strings. gpt-4o-mini returns objects here
+// often enough that a strict string filter silently emptied the decision guide,
+// which is the one section a training reader acts on. Objects are flattened to
+// their first meaningful text field; anything else is still dropped.
+const TEXT_KEYS = ["summary", "text", "guidance", "recommendation", "advice", "line", "step"];
+
+function textLines(value: unknown, limit: number): string[] {
+  if (typeof value === "string") return value.trim() ? [value.trim()].slice(0, limit) : [];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string") return item.trim() ? [item.trim()] : [];
+    if (!item || typeof item !== "object") return [];
+    const raw = item as Record<string, unknown>;
+    const key = TEXT_KEYS.find((candidate) => typeof raw[candidate] === "string" && (raw[candidate] as string).trim());
+    if (key) {
+      const label = typeof raw.subject === "string" && raw.subject.trim() ? `${raw.subject.trim()}: ` : "";
+      return [`${label}${(raw[key] as string).trim()}`];
+    }
+    // Last resort: a single-valued object like {"if you are new": "start here"}.
+    const values = Object.values(raw).filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+    return values.length === 1 ? [values[0].trim()] : [];
+  }).slice(0, limit);
+}
+
 function ids(value: unknown, allowed?: Set<number>): number[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map(Number).filter((item) => Number.isInteger(item) && item > 0 && (!allowed || allowed.has(item))))].slice(0, 8);
@@ -184,7 +215,7 @@ async function vectorBranch(state: RetrievalStateType): Promise<Partial<Retrieva
     return { vector: [], trace: [trace("compare_vector", "Semantic retrieval", "disabled in zero-paid Local Qwen mode; no OpenAI embedding call", startedAt)] };
   }
   const env = getServerEnv();
-  const openai = env.openaiApiKey ? new OpenAI({ apiKey: env.openaiApiKey }) : null;
+  const openai = env.openaiApiKey ? openaiFor(env) : null;
   try {
     const rows = filterDegenerate(await vectorResults(state.query, COMPARISON_CANDIDATE_LIMIT, openai, env));
     return { vector: rows, trace: [trace("compare_vector", "Semantic retrieval", `${rows.length} candidates`, startedAt)] };
@@ -349,12 +380,21 @@ function assessPanelNode(state: State): Partial<State> {
   if (state.groups.length < 2 && state.refinementRound >= state.maxRefinementRounds) {
     throw new Error("INSUFFICIENT_INSTRUCTORS: fewer than two attributed instructors remained after targeted retrieval.");
   }
+  // A refinement round only earns the next one by closing a gap. Without this
+  // every run spent its whole budget re-ranking its way back to the same panel.
+  const productive = state.previousGapCount === null || gaps.length < state.previousGapCount;
   return {
     qualityGaps: gaps,
+    previousGapCount: gaps.length,
+    refinementProductive: productive,
     trace: [trace(
       "compare_panel_quality",
       "Evidence quality gate",
-      gaps.length === 0 ? "panel passed deterministic coverage checks" : `${gaps.length} evidence gap${gaps.length === 1 ? "" : "s"} detected`,
+      gaps.length === 0
+        ? "panel passed deterministic coverage checks"
+        : `${gaps.length} evidence gap${gaps.length === 1 ? "" : "s"} detected${
+          state.refinementRound > 0 && !productive ? "; last targeted round closed none, so refinement stops" : ""
+        }`,
       startedAt,
     )],
   };
@@ -365,6 +405,7 @@ function routePanelQuality(state: State): "refine" | "review" {
     qualityGapCount: state.qualityGaps.length,
     refinementRound: state.refinementRound,
     maxRefinementRounds: state.maxRefinementRounds,
+    lastRoundClosedAGap: state.refinementProductive,
   }) ? "refine" : "review";
 }
 
@@ -574,6 +615,9 @@ async function synthesizeNode(state: State): Promise<Partial<State>> {
       "A difference should name the instructors involved and cite evidence from at least two instructors.",
       "Return JSON only with topic, shared_principles, important_differences, decision_guide, caveats.",
       "shared_principles entries are {summary,citation_ids}; important_differences entries are {subject,explanation,instructor_names,citation_ids}.",
+      // Without this the field came back empty on most runs, which is the one
+      // section a training reader actually acts on.
+      "decision_guide is required: 2 to 4 short lines telling someone which approach to work on and when, drawn only from the analyses above.",
     ].join(" "), { question: state.query, instructor_analyses: analyses }, env);
   const parsed = objectValue(generation.value);
   const shared = Array.isArray(parsed.shared_principles) ? parsed.shared_principles : [];
@@ -597,8 +641,8 @@ async function synthesizeNode(state: State): Promise<Partial<State>> {
           citationIds: ids(raw.citation_ids),
         }];
       }).slice(0, 5),
-      decisionGuide: strings(parsed.decision_guide, 5),
-      caveats: strings(parsed.caveats, 4),
+      decisionGuide: textLines(parsed.decision_guide, 5),
+      caveats: textLines(parsed.caveats, 4),
     },
     modelCalls: [modelCall("synthesis", state.selectedProvider, generation.model, performance.now() - modelStartedAt, generation.usage)],
     trace: [trace("compare_synthesize", "Cross-instructor synthesis", `${analyses.length} independent analyses converged`, startedAt)],
@@ -766,6 +810,9 @@ function routeFinalQuality(state: State): "refine" | "finish" {
     qualityGapCount: state.qualityGaps.length,
     refinementRound: state.refinementRound,
     maxRefinementRounds: state.maxRefinementRounds,
+    // Looping back from here rebuilds the panel through the same targeted
+    // retrieval, so a panel round that already failed to help will not help now.
+    lastRoundClosedAGap: state.refinementProductive,
   }) ? "refine" : "finish";
 }
 
@@ -1001,4 +1048,85 @@ export async function branchInstructorComparison(input: {
     sourceCheckpointId,
     forkCheckpointId: checkpointId(fork) ?? "",
   };
+}
+
+// --- Streamed, auto-approving entry points -------------------------------
+//
+// The public instructors app runs the same graph as the demo, but it cannot
+// hold one HTTP request open for the whole workflow: Cloudflare cuts an origin
+// response off at 100 seconds, and a measured run has gone to 114. So the route
+// starts the workflow as a background job and polls it, which needs the trace
+// as it accumulates rather than only at the end.
+//
+// streamMode "values" yields the whole state after every superstep, and the
+// trace channel is append-only, so each chunk carries every node that has
+// finished so far. That is exactly the progress the UI draws.
+
+export type CompareProgressListener = (trace: RagGraphTraceEntry[]) => void;
+
+async function streamToFinalState(
+  input: Partial<State> | null,
+  threadId: string,
+  onProgress?: CompareProgressListener,
+): Promise<State> {
+  const stream = await getGraph().stream(input as never, {
+    ...config(threadId),
+    streamMode: "values",
+    callbacks: langfuseCallbacks(),
+  });
+  let final: State | null = null;
+  for await (const chunk of stream) {
+    final = chunk as State;
+    if (onProgress && Array.isArray(final.trace)) onProgress(final.trace);
+  }
+  if (!final) throw new Error("The comparison workflow produced no state.");
+  return final;
+}
+
+export async function runInstructorComparisonStreamed(input: {
+  threadId: string;
+  query: string;
+  instructorCount: number;
+  provider: Exclude<AnswerProvider, "claude">;
+  onProgress?: CompareProgressListener;
+}): Promise<Awaited<ReturnType<typeof completedResult>>> {
+  const maxRefinementRounds = getServerEnv().ragCompareMaxRefinementRounds;
+  const final = await streamToFinalState({
+    threadId: input.threadId,
+    nextQuery: input.query,
+    requestedInstructors: input.instructorCount,
+    selectedProvider: input.provider,
+    // Auto-approve: the panel review node still runs and still records its
+    // decision in the trace, it just does not interrupt for a human. A public
+    // one-click app cannot leave half-finished threads waiting on a click.
+    guided: false,
+    maxRefinementRounds,
+    testFailureSlug: null,
+  }, input.threadId, input.onProgress);
+  return completedResult(input.threadId, final);
+}
+
+// Turn two and later on an existing thread. The checkpoint still holds the
+// approved panel, so initializeNode retains those instructor groups and the
+// follow-up reuses the evidence instead of retrieving from nothing.
+export async function continueInstructorComparisonStreamed(input: {
+  threadId: string;
+  query: string;
+  provider: Exclude<AnswerProvider, "claude">;
+  onProgress?: CompareProgressListener;
+}): Promise<Awaited<ReturnType<typeof completedResult>>> {
+  const final = await streamToFinalState({
+    nextQuery: input.query,
+    selectedProvider: input.provider,
+    guided: false,
+    testFailureSlug: null,
+  }, input.threadId, input.onProgress);
+  return completedResult(input.threadId, final);
+}
+
+// Whether a thread already has state, so a follow-up cannot be aimed at a
+// thread id somebody invented.
+export async function instructorCompareThreadExists(threadId: string): Promise<boolean> {
+  const snapshot = await getGraph().getState(config(threadId));
+  return Boolean(snapshot?.values && Object.keys(snapshot.values).length > 0);
 }

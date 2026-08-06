@@ -1,8 +1,7 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { ChatOpenAI } from "@langchain/openai";
-import OpenAI from "openai";
-import { generateAnswer, providerModel } from "@/lib/answerProviders";
+import { generateAnswer, openaiFor, providerModel } from "@/lib/answerProviders";
 import { getServerEnv } from "@/lib/env";
 import type { AnswerProvider } from "@/lib/providers";
 import { enrichCandidates, type RetrievalMode } from "@/lib/ragPipeline";
@@ -203,7 +202,7 @@ async function enrichNode(state: State): Promise<Partial<State>> {
 async function generateNode(state: State): Promise<Partial<State>> {
   const startedAt = performance.now();
   const env = getServerEnv();
-  const openai = env.openaiApiKey ? new OpenAI({ apiKey: env.openaiApiKey }) : null;
+  const openai = env.openaiApiKey ? openaiFor(env) : null;
   const generationConversation = state.relationship === "same_topic" ? state.conversation : [];
   let actualProvider = state.requestedProvider;
   let generation;
