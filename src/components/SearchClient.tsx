@@ -143,10 +143,10 @@ const PIPELINE = [
 ];
 
 const METRICS = [
-  { value: "12,104", label: "chunks" },
-  { value: "2,298", label: "transcripts" },
-  { value: "2,844", label: "techniques" },
-  { value: "12,104", label: "embedded" },
+  { value: "14,274", label: "chunks" },
+  { value: "2,847", label: "transcripts" },
+  { value: "3,432", label: "techniques" },
+  { value: "14,274", label: "embedded" },
 ];
 
 const EXPLAIN_STEPS = [
@@ -167,22 +167,22 @@ const USE_CASES = [
 const PITCH_LINES = [
   "Citation-grounded answers, no hallucinated sources",
   "Hybrid keyword + semantic retrieval with RRF",
-  "Full 12,104-chunk corpus searchable in one query",
+  "Full 14,274-chunk corpus searchable in one query",
 ];
 
 const EVAL_STRIP = [
   { value: "19/19", label: "eval queries passing" },
   { value: "4", label: "checks per query" },
-  { value: "12,104", label: "chunks embedded" },
+  { value: "14,274", label: "chunks embedded" },
   { value: "RRF", label: "hybrid fusion" },
 ];
 
 const TABLE_ROWS: Array<{ table: string; count: string; type: "Core" | "Meta" | "Vectors" | "Logs"; desc: string }> = [
-  { table: "rag_videos", count: "2,402", type: "Core", desc: "Video title, source URL, platform, channel, thumbnail, slug." },
-  { table: "rag_video_transcripts", count: "2,298", type: "Core", desc: "Raw transcript JSON segments and transcript metadata." },
-  { table: "rag_techniques", count: "2,844", type: "Meta", desc: "Technique names, positions, summaries, steps, timestamps." },
-  { table: "rag_creators", count: "468", type: "Meta", desc: "Canonical creator names, aliases, opt-out field." },
-  { table: "rag_transcript_chunks", count: "12,104", type: "Vectors", desc: "Searchable timestamped chunks + embedding vectors." },
+  { table: "rag_videos", count: "3,032", type: "Core", desc: "Video title, source URL, platform, channel, thumbnail, slug." },
+  { table: "rag_video_transcripts", count: "2,847", type: "Core", desc: "Raw transcript JSON segments and transcript metadata." },
+  { table: "rag_techniques", count: "3,432", type: "Meta", desc: "Technique names, positions, summaries, steps, timestamps." },
+  { table: "rag_creators", count: "477", type: "Meta", desc: "Canonical creator names, aliases, opt-out field." },
+  { table: "rag_transcript_chunks", count: "14,274", type: "Vectors", desc: "Searchable timestamped chunks + embedding vectors." },
   { table: "rag_search_logs", count: "Live", type: "Logs", desc: "Every keyword, semantic, analysis, Ask AI, and follow-up query." },
   { table: "rag_followup_experiment_runs", count: "Ready", type: "Logs", desc: "Server-only LangGraph follow-up timing, routing, model, and outcome telemetry." },
   { table: "rag_instructor_compare_runs", count: "Live", type: "Logs", desc: "Server-only safe comparison results, token/timing metrics, citations, and quality signals." },

@@ -274,7 +274,7 @@ export function InstructorCompare({ providers }: { providers: ProviderInfo[] }) 
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-accent">Live LangGraph workflow</span>
-              <span className="rounded-full border border-border bg-secondary px-2.5 py-1 text-[10px] font-bold text-muted-foreground">1,044 person-attributed videos</span>
+              <span className="rounded-full border border-border bg-secondary px-2.5 py-1 text-[10px] font-bold text-muted-foreground">1,163 person-attributed videos</span>
             </div>
             <h2 className="mt-3 text-2xl font-bold leading-tight text-balance">Compare instructors without watching dozens of videos first</h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-foreground/65">Ask about one BJJ situation. The graph finds distinct instructors, analyzes each from their own timestamped evidence, then shows where their approaches agree, differ, and fit.</p>

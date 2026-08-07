@@ -1,7 +1,7 @@
 # RAG Search Eval
 
-Generated: 2026-07-15T05:20:36.847Z
-Base URL: http://localhost:3417
+Generated: 2026-08-07T04:14:02.117Z
+Base URL: http://localhost:3418
 Result limit: 5
 Passed: 19/19
 
@@ -22,8 +22,8 @@ Passed: 19/19
 | `arm triangle` | PASS | 5 Chokes Everyone Needs to Know (well, Five-ish anyway) \| Jiu-Jitsu Fundamentals | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
 | `ankle lock` | PASS | John Danaher Reveals His SECRET Detail For Unstoppable Ankle Locks | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
 | `heel hook` | PASS | John Danaher Reveals His SECRET Detail For Unstoppable Ankle Locks | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
-| `mount escape` | PASS | The First 5 Mount Escapes You Need to Know in BJJ | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
-| `closed guard pass` | PASS | How to Pass Closed Guard in No-Gi BJJ (Standing Guard Break That Actually Works) | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
+| `mount escape` | PASS | Sneaky Armlock from Open Guard \| BJJ Tutorial – Coach Nic Gregoriades | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
+| `closed guard pass` | PASS | Elements Of a Good Guard Pass | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
 | `bow and arrow choke` | PASS | Winter Camp 2026: Black Belt Approach to Fundamental Submissions: Chokes with Matthew McPeake | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
 | `omoplata` | PASS | Williams GUARD \| Advanced SWEEPS & SUBMISSIONS | pass minimum results<br>pass expected terms<br>pass citations<br>pass source URLs |
 
@@ -105,9 +105,9 @@ Expected: Top results should include half guard plus underhook/dogfight concepts
 2. All About Jiu Jitsu Half Guard No Gi by Gordon Ryan @ 202.72-212.88
    - https://www.youtube.com/watch?v=jbxv4EIcRlE
    - guards and be successful outside of half guard where your initial setups are coming from a half guard and additionally if i'm a seated guard player i can't just be someone who is seated here and then banana crushes me to...
-3. Crazy Dog Grip to Pressure Pass - Andre Galvao @ 652-682
-   - https://www.youtube.com/watch?v=tGFn5NO54Wg
-   - can't turn. can't turn. Now I extend the leg, Now I extend the leg, Now I extend the leg, park the car, park the car, park the car, go over to him. go over to him. go over to him. Leg drag, I call this mini leg drag. You...
+3. Backsteps are SUPER easy to counter! 🥋 @ 4-34
+   - https://www.youtube.com/watch?v=8XiN4rpergE
+   - Backsteps are actually super easy to Backsteps are actually super easy to counter. You're in quarter guard, you have an You're in quarter guard, you have an underhook, and chances are they're going underhook, and chances...
 
 ### PASS: guard retention
 
@@ -302,12 +302,12 @@ Expected: Top results should mention ankle locks, foot locks, leg-lock entries, 
 1. John Danaher Reveals His SECRET Detail For Unstoppable Ankle Locks @ 6.64-36.64
    - https://www.youtube.com/watch?v=nF301WIHEdw
    - Okay, guys, I'm here today with John Dana, you joining for me as always, Plastered and Reese. Please. And the guys, this week here joint stream entire structure all about the ankle lock, so master the move ankle locks. A...
-2. X Guard Sweep to Ankle Lock @ 75.2-105.2
+2. Mateusz Szczecinski Puts On A Submission Masterclass | Fix My Game @ 1064.96-1094.96
+   - https://www.youtube.com/watch?v=bEEEWPHDCYk
+   - >> So I'm not losing energy because obviously if somebody is trying ankle lock, you probably guys were in this situation where you're in outside Ashi. you have a shitty ankle lock grip and just going all out into that gr...
+3. X Guard Sweep to Ankle Lock @ 75.2-105.2
    - https://www.youtube.com/watch?v=rWCEqF9D1_4
    - entry-level sweep is to just come down here and basically kick this foot forward as I push this foot back. Whoop. Okay? Very simple sweep there. Something we can do from here basically is we can go right into an ankle lo...
-3. John Danaher Reveals His SECRET Detail For Unstoppable Ankle Locks @ 157.52-187.52
-   - https://www.youtube.com/watch?v=nF301WIHEdw
-   - was how they were applied and how they were integrated with each other. >> are called >> and so the the the uh the network around heel hook and changed a lot. But, the heel hook itself didn't change that much. You know, ...
 
 ### PASS: heel hook
 
@@ -322,12 +322,12 @@ Expected: Top results should mention heel hooks, leg locks, or related inside/ou
 1. John Danaher Reveals His SECRET Detail For Unstoppable Ankle Locks @ 126.4-146.72
    - https://www.youtube.com/watch?v=nF301WIHEdw
    - athletes like uh Matheus Diniz who focus almost entirely on ankle locks. You'll see other athletes like uh Helena Crevar or Michael Musumeci who go between ankle locks and heel hooks and play between the two. And so I wa...
-2. 10 Submissions From Gordon Ryan @ 355.56-363.92
-   - https://www.youtube.com/watch?v=iYMoZCS4S4c
-   - this leg lock. He's really looking in the leg. He's really looking for the legs on this one. And you know, Josh is not in panic mode at all. He's just He's doing the right things. He's getting trying to get the hip high ...
-3. John Danaher Reveals His SECRET Detail For Unstoppable Ankle Locks @ 672.04-695.68
-   - https://www.youtube.com/watch?v=nF301WIHEdw
-   - it coming on. And so by its very nature, it tends to be something where it's easier for for a training partner to read the danger is approaching and seems to be safer. Um as you know, but I was one of the very few leg lo...
+2. Reverse Closed Guard: The Hidden Leg Lock System in No-Gi BJJ @ 623.16-653.16
+   - https://www.youtube.com/watch?v=61DvbMGUpUk
+   - With this grip, I can reinforce it with my second hand to grab and start applying pressure here, and kind of like a heel hook, twist and get a strong submission. Now, there's two variations. I want you to focus on this c...
+3. 5x World Champion Diego Pato Teaches His Painful Leg Lock System @ 74.88-104.88
+   - https://www.youtube.com/watch?v=IxljdaIIt0E
+   - what goes on what's your process? What's your system to to do that? >> Basically everything's combined with everybody like with the same technique. So if you find like the lag, you can find like the heel hook and ankle l...
 
 ### PASS: mount escape
 
@@ -339,15 +339,15 @@ Expected: Top results should mention mount escapes, bridging, frames, hip escape
 - PASS citations: top 3 have citations/timestamps
 - PASS source URLs: top 3 have source URLs
 
-1. The First 5 Mount Escapes You Need to Know in BJJ @ 27.76-57.76
+1. Sneaky Armlock from Open Guard | BJJ Tutorial – Coach Nic Gregoriades @ 318.88-348.88
+   - https://www.youtube.com/watch?v=MHK_7ZKYuUY
+   - This next technique that I'm going to show you is an escape from a very specific scenario which is technical mount. It's when you are going to use a regular escape mount and your opponent counters by moving into the tech...
+2. Technical Mount Escape | BJJ Tutorial – Coach Nic Gregoriades @ 35.84-65.84
+   - https://www.youtube.com/watch?v=P6TXE1sb1ME
+   - This next technique that I'm going to show you is an escape from a very specific scenario, which is technical mount. It's when you are going to use a regular escape from mount and your opponent counters by moving into th...
+3. The First 5 Mount Escapes You Need to Know in BJJ @ 27.76-57.76
    - https://www.youtube.com/watch?v=Kcn78sJtPpo
    - Guys, there's a position in Jiu-Jitsu called mount that absolutely sucks if you get stuck in it. And if you're newer, probably want some options to get out of this damn thing so you can actually enjoy playing Jiu-Jitsu. ...
-2. Why Most Mount Escapes Fail (The Principles Everyone Miss) @ 31.68-61.68
-   - https://www.youtube.com/watch?v=upUzGcHGDO0
-   - All right, guys. Welcome back to the channel. We have a continuation off of our escape series we're going to be going over. So, you guys didn't already see our last video where we talked about escaping the back, you guys...
-3. Effective Mount Escape is a Lifesaver against Bigger People in BJJ @ 254.72-284.72
-   - https://www.youtube.com/watch?v=rnpO6y9PPnc
-   - go to this more side mount or gift wrap position and take the back right so what we're doing is we're turning our hips all the way over but we're staying like this this allows me to set up the frame and i can hook with t...
 
 ### PASS: closed guard pass
 
@@ -359,15 +359,15 @@ Expected: Top results should mention closed guard, guard breaks, posture, and pa
 - PASS citations: top 3 have citations/timestamps
 - PASS source URLs: top 3 have source URLs
 
-1. How to Pass Closed Guard in No-Gi BJJ (Standing Guard Break That Actually Works) @ 0-30
+1. Elements Of a Good Guard Pass @ 0.8-30.8
+   - https://www.youtube.com/watch?v=s_c_KmiJok0
+   - So, I learned how to pass the guard the way everybody did. I saw this guard passing game very early in my career from Hickson cuz this is his passing style. But, I did not understand what I was looking at. And I went on ...
+2. How to Pass Closed Guard in No-Gi BJJ (Standing Guard Break That Actually Works) @ 0-30
    - https://www.youtube.com/watch?v=wLIx6-Gy15k
    - Do you truly think you can pass the closed guard like this? In this video, I'll show you how to pass the closed guard in no time. Oops. Okay, guys. Closed guard might be dead for some of you, but it's a position I still ...
-2. How to NEVER Get Stuck in the Closed Guard Again! | Jiu Jitsu Tutorial @ 6.24-36.24
+3. How to NEVER Get Stuck in the Closed Guard Again! | Jiu Jitsu Tutorial @ 6.24-36.24
    - https://www.youtube.com/watch?v=d_zfY7Kjezo
    - How to never get stuck in closed guard ever again. You know the feeling. Guy's got his legs wrapped around you. He's squeezing tight. You're trying everything you can to open it. Open it. We know we can't pass if the gua...
-3. Go Further Faster: BJJ Fundamentals (Gi) by John Danaher @ 141.85-171.85
-   - https://www.youtube.com/watch?v=jdv82OdlTO8
-   - are opening a closed guard passing an open guard passing half guard pin maintenance in transitions and turtle breakdowns so three areas of skills standing ground bottom and ground taught each with five fundamental skills...
 
 ### PASS: bow and arrow choke
 
