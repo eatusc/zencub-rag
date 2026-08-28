@@ -32,7 +32,11 @@ async function search(args: Record<string, unknown>): Promise<Body> {
   return JSON.parse((r.content ?? []).map((p) => p.text ?? "").join("\n")) as Body;
 }
 
-for (const query of ["heel hook defense", "kimura from side control", "escaping side control", "how do I stop gassing out during rolls"]) {
+const QUERIES = process.argv.slice(2).length > 0
+  ? process.argv.slice(2)
+  : ["heel hook defense", "kimura from side control", "escaping side control", "how do I stop gassing out during rolls"];
+
+for (const query of QUERIES) {
   console.log(`\n================ ${query} ================`);
   for (const filter of ["none", "curated"]) {
     const body = await search({ query, filter, limit: 5 });

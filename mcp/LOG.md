@@ -813,3 +813,134 @@ failed; `npm run typecheck` clean; `npx eslint mcp src tests` clean.
 
 Phase 3 failure reporting is now solved for *autodeploy*, not for the MCP server
 itself. That server still reports success and cannot say it broke.
+
+## 2026-08-28 - content_kind classified and gated; the card path measured and rejected
+
+### The corpus is classified
+
+Two passes, on Eric's call, after the first single-model attempt was stopped.
+
+**Pass 1, local Qwen (`qwen3.6:35b-mlx`), free, 62 minutes: 2,844 of 2,845.**
+Ollama's OpenAI-compatible `/v1` endpoint cannot be used for a reasoning model:
+with `max_tokens` 200 it spends all 200 on reasoning and returns
+`finish_reason: length`, `content: ""`, with the thinking in a separate
+`reasoning` field, so all 30 gold rows failed to parse. `enable_thinking` via
+`chat_template_kwargs` on `/v1` is ignored. The native `/api/chat` endpoint
+honours `think: false` and returns clean JSON in ~0.6s.
+
+**Pass 2, Haiku, $1.14, over only the 406 videos pass 1 wanted to exclude: 381
+agreed, 25 overturned.** The rescues include "Most Underrated Armbar in Jiu
+Jitsu", a side control escape, solo torreando drills and another Zahabi fight
+discussion. **6% of Qwen's exclusions were wrong**, which is the two-pass paying
+for itself rather than a precaution.
+
+The design's justification is measurable rather than rhetorical: on the 35-item
+gold set *each model alone* scores 34/35 with one false exclude, and they fail
+on **different videos** -- Qwen on Zahabi's post-fight analysis, Haiku on his
+pre-fight one. Because the verifier only ever sees what pass 1 wants to exclude,
+Qwen's error is caught and Haiku's is unreachable.
+
+**Verified end to end against the database, not argued from two eval runs:** the
+35 gold videos come back **35/35 on the keep/exclude gate, 0 false excludes**.
+Exact labels 33/35, both disagreements inside the kept set where they cannot
+reach a retrieval decision.
+
+### The seventh class, found by auditing rather than reasoning
+
+`off_topic` was added after reading the first run's output. The six values in
+0002 came from reading the *flagged* set, which was all grappling, so a Tesla
+review, a Bangkok travel vlog, streetball and the finance videos had nowhere to
+go and the model filed them as `no_content` -- wrong by that class's own
+definition, since every one is fluent English.
+
+That wastebasket had already started swallowing keepers: "Technical Stand-up
+sweep" is garbled ASR of a real lesson ("I look to the shoulder feeling lif the
+sweep from the leg") and was also `no_content`. The prompt now states that badly
+transcribed speech is still speech.
+
+Migration 0004 widens the CHECK to seven values and adds
+`content_kind_verified_model` / `_at`, so "checked and agreed" is
+distinguishable from "never checked".
+
+### The gate is live
+
+`heel hook defense`, on the running pipeline:
+
+| filter | #1 |
+| --- | --- |
+| `none` | `[event_coverage]` 2026 Polaris 37 |
+| `curated` | `[instruction]` Part 2 - Leduc BJJ Seminar |
+
+`kimura from side control`, `escaping side control` and `how do I stop gassing
+out during rolls` are **unchanged**, including "7 Reasons Why Your Side Control
+Escapes Sucks", which the old `strict` filter wrongly dropped. The gate removes
+what it should and nothing else.
+
+Two defects found by running it:
+
+- **The gate shrank the page.** Filtering happens after retrieval, so `curated`
+  at limit 5 returned 3. A comment claimed over-fetching "no longer widens the
+  pool"; measured, that is false (limit 5 returns 5 rows, limit 15 returns 12),
+  so the route now over-fetches when a filter is active.
+- `retrieved` vs `returned` became misleading once they legitimately differ, so
+  the response reports `requested_from_retrieval`.
+
+Default flipped `flagged` -> `curated` in the same change that verified
+coverage, as the previous commit's comment promised.
+
+### The technique-card path: wired, measured, rejected
+
+PLAN.md Tier 2 recorded `metadataResults` never being called by
+`buildCandidates` as a defect, on the claim that card quality "steers which
+chunks retrieval returns". Wired into `/api/rag/retrieve` and measured, **the
+claim does not hold**:
+
+| query | effect of turning cards on |
+| --- | --- |
+| escaping side control | pushes the Danaher side control escape off #1 entirely; puts an untitled "Instagram Reel" at #4 |
+| heel hook defense | displaces Eddie Cummings on inside sankaku with WNO event footage |
+| berimbolo | no effect |
+| half guard knee shield | neutral shuffle of slots 4 and 5 |
+
+Ships behind `include_metadata: true`, **off by default**. Reserved slots are
+displacement: every card hit costs a retrieval hit the rerank had already ranked
+above it. Kept rather than reverted so the measurement is readable.
+
+Two method notes worth more than the feature:
+
+- **Appending would have been a silent no-op.** `rerankCandidates` takes
+  `candidates.slice(0, RERANK_POOL)` and RERANK_POOL is 12, so adding card hits
+  to a list already holding 12 drops every one before the rerank sees them.
+- **The first A/B was wrong and looked great.** The first request after a
+  restart returns a different order, so the OFF arm was reading a cold server.
+  An OFF-twice stability control reversed the conclusion. Retrieval is otherwise
+  deterministic: three identical calls give identical results.
+
+`ragPipeline.ts` was not modified, as required.
+
+### Cost and credentials
+
+The first run 402'd at 1,663 videos. Two separate causes, both fixed:
+
+- No `max_tokens` was set, so OpenRouter defaulted to the model's 64,000-token
+  output ceiling and applied its affordability pre-check against that number.
+  The reply is ~60 tokens. Now capped at 200.
+- **The classifier was using `OPENROUTER_API_KEY`, which `src/lib/env.ts:49`
+  also gives the running app.** A batch job spent $4.69 of a $5 key limit and
+  left the live site's Ask fallback with $0.31. The classifier now takes
+  `CONTENT_KIND_API_KEY`, a separate key, and `.env.example` records why.
+
+Also: a 402 was treated as a bad row rather than a condition of the run, so it
+retried the remaining 1,182 videos and buried the one useful fact under 1,182
+copies of it. 402 and 401 now stop the loop at the first occurrence.
+
+And the classification path had **never executed**: the non-eval query passed an
+unused `$1`, which Postgres cannot type, so it failed before a single model
+call. Every prior run was `--eval`, which takes the other branch.
+
+### Verified
+
+`npm test` 76; `smoke-test.ts` 60; `search-test.ts` 36 (27 -> 32 -> 36);
+`test-alerting.sh` 25; `npm run typecheck` clean; `npx eslint mcp src tests`
+clean. Migrations 0002 and 0004 applied to TEST, each validated inside
+`BEGIN; ... ROLLBACK;` first.

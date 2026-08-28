@@ -199,7 +199,7 @@ the split clean: HTTP for ranking, reader role for corpus facts.
 - [x] Degrade to text-only when `OPENAI_API_KEY` is absent, and say so in the
       response, rather than failing or silently returning worse results.
       `mcp/src/search.ts:107-111` pushes an explicit warning.
-- [ ] Log to `rag_search_logs` under a distinct action so MCP traffic does not
+- [x] Log to `rag_search_logs` under a distinct action so MCP traffic does not
       pollute the public-site analytics, and so this server's own retrieval
       quality is measurable next to the site's.
 
@@ -316,13 +316,23 @@ What is missing compared with the real pipeline, all of it in `ragPipeline.ts`:
       rerank.** The rerank does not solve event coverage; only `content_kind`
       does. That is the argument for Phase 5 Tier 1, unchanged.
 
-- [ ] **The technique-card path is still not wired in.** `metadataResults`
-      exists in `ragPipeline.ts` but `buildCandidates` never calls it: only
-      `instructorCompareGraph` and `retrievalSubgraph` do. So a query naming a
-      technique still gets no benefit from the structured cards, on the MCP
-      surface *or* on `/api/rag/ask`. The Tier 2 note that cards "steer which
-      chunks retrieval returns" is therefore true of the LangGraph paths only,
-      and was wrong about `/api/rag/ask`.
+- [x] **The technique-card path is wired, measured, and deliberately left
+      off.** Done 2026-08-28. `metadataResults` now runs in
+      `/api/rag/retrieve` behind `include_metadata`, with two of the twelve
+      rerank slots reserved for card hits scoring >= 2 matched terms.
+      **It makes results worse**, on a deterministic A/B with an OFF-twice
+      stability control: `escaping side control` loses the Danaher escape from
+      #1 and gains an untitled "Instagram Reel" at #4; `heel hook defense`
+      loses Eddie Cummings to WNO event footage. So the Tier 2 claim that cards
+      "steer which chunks retrieval returns" was not merely missing from this
+      path -- as a ranking signal it is **negative here**, because every
+      reserved slot displaces a retrieval hit the rerank had already placed
+      above it. Off by default, kept so the measurement is readable.
+      Two method notes: appending instead of reserving would have been a silent
+      no-op (`rerankCandidates` slices to RERANK_POOL = 12); and the first A/B
+      showed large gains and was wrong, because the first request after a
+      restart returns a different order and the OFF arm was reading a cold
+      server.
 
 ### Blocked on the relevance gate
 
@@ -548,9 +558,24 @@ gassing out" scores 0 literal chunk hits and 123 concept-word hits.
          videos and 930 chunks. Findings in the bucket table above. It is not
          all promo clips: it holds real instruction, real physical prep, a large
          body of training advice, and the `no_content` class.
-      3. [ ] `search_transcripts` (Phase 2) filters on `content_kind`. New tool,
-         no users, nothing to regress.
-      4. [~] Classify `content_kind` properly:
+      3. [x] `search_transcripts` (Phase 2) filters on `content_kind`. Done
+         2026-08-28 as `filter=curated`, now the **default**: drops
+         `event_coverage`, `no_content` and `off_topic`, keeps NULL because
+         unclassified is not a verdict. `heel hook defense` returns the Leduc
+         seminar at #1 instead of 2026 Polaris 37, while `kimura from side
+         control`, `escaping side control` and `how do I stop gassing out` are
+         unchanged. Found while doing it: filtering after retrieval shrank the
+         page (limit 5 returned 3), so the route over-fetches when a filter is
+         on.
+      4. [x] Classify `content_kind` properly. **Done 2026-08-28, 2,845 of
+         2,845**, in two passes: local Qwen over everything (free, 62 min), then
+         Haiku over only the 406 exclusions ($1.14), overturning 25 of them. A
+         seventh value, `off_topic`, was added after auditing the first run.
+         Verified against the database: the 35 gold videos come back 35/35 on
+         the gate with 0 false excludes, where each model alone scores 34/35.
+         Original plan text follows.
+
+         Classify `content_kind` properly:
          `instruction | training_advice | event_coverage | interview |
          promotional | no_content`. Gate on `event_coverage` and `no_content`.
          This is the signal actually wanted, and it keeps the back-pain, mindset
