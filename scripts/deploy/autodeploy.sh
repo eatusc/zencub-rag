@@ -55,7 +55,7 @@ mark_ok() {
   if [ "$(read_state)" = "fail" ]; then
     page "zencub-rag autodeploy RECOVERED
 now on $(git rev-parse --short HEAD) ($(git rev-parse --abbrev-ref HEAD))
-3418 reports: $(live_sha || echo unreachable)"
+$(surface_summary)"
   fi
   write_state ok "$now"
 }
@@ -81,7 +81,7 @@ $detail
 
 branch: $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)
 origin/main: $(git rev-parse --short origin/main 2>/dev/null || echo unknown)
-3418 reports: $(live_sha || echo unreachable)
+$(surface_summary)
 log: $LOG_DIR/autodeploy.log"; then
     write_state fail "$now"
   else
@@ -116,16 +116,54 @@ This is not a failure. Nothing is being deployed until the branch merges or the
 checkout returns to main.
 
 origin/main: $(git rev-parse --short origin/main 2>/dev/null || echo unknown)
-3418 reports: $(live_sha || echo unreachable)"; then
+$(surface_summary)"; then
     write_state parked "$now"
   else
     write_state parked "$last"
   fi
 }
 
-live_sha() {
-  curl -fsS --max-time 5 http://127.0.0.1:3418/api/health 2>/dev/null \
+port_sha() {
+  curl -fsS --max-time 5 "http://127.0.0.1:$1/api/health" 2>/dev/null \
     | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p'
+}
+
+# Every surface, named, so an alert can say which one is down instead of "the
+# deploy". 3419 answers 401 on /api/health by design -- its PIN gate fails
+# closed -- so its liveness check is the unlock page.
+#
+# Every field is defaulted to the literal word "unreachable". A down surface
+# rendering as an empty string is the whole failure mode this file exists to
+# stop: the page would still be sent, and would read as though that surface had
+# simply not been mentioned.
+surface_summary() {
+  local public instructors mcp demo
+  public="$(port_sha 3418)" || public=""
+  instructors="$(port_sha 3420)" || instructors=""
+  mcp="$(port_sha 3421)" || mcp=""
+  if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3419/unlock 2>/dev/null; then
+    demo="serving"
+  else
+    demo="unreachable"
+  fi
+  printf 'public 3418: %s | instructors 3420: %s | mcp 3421: %s | demo 3419: %s' \
+    "${public:-unreachable}" "${instructors:-unreachable}" "${mcp:-unreachable}" "$demo"
+}
+
+# Names the surfaces that are not on $1, empty when everything is current.
+#
+# This used to read 3418 alone, which made the other three invisible between
+# deploys: mcp on 3421 could crash-loop indefinitely and autodeploy would keep
+# writing "ok" because the public site was fine. 3421 is the one that matters
+# most here, because it is the only surface nobody ever browses to, so a human
+# would never notice it by accident.
+surfaces_behind() {
+  local want="$1" out=""
+  [ "$(port_sha 3418)" = "$want" ] || out="$out public/3418"
+  [ "$(port_sha 3420)" = "$want" ] || out="$out instructors/3420"
+  [ "$(port_sha 3421)" = "$want" ] || out="$out mcp/3421"
+  curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3419/unlock 2>/dev/null || out="$out demo/3419"
+  echo "${out# }"
 }
 
 git fetch --quiet origin main
@@ -144,13 +182,21 @@ fi
 if [ "$local_sha" = "$remote_sha" ]; then
   # A current checkout does not mean current servers: a build can fail after the
   # fast-forward already landed, which leaves git looking up to date while the
-  # servers keep serving the old bundle. Compare what is actually running.
-  live="$(live_sha)" || live=""
-  if [ "$live" = "$(git rev-parse --short HEAD)" ]; then
+  # servers keep serving the old bundle. Compare what is actually running -- on
+  # every surface, because a dead one is not visible in the checkout either.
+  #
+  # This is what makes a crash-looping surface reach a person. launchd restarts
+  # it forever (KeepAlive, ThrottleInterval 15) and says nothing, so the loop is
+  # silent by construction. Here it shows up as a surface behind the expected
+  # sha, which triggers a redeploy; if it still will not come up, deploy.sh's
+  # own per-surface verification fails and mark_fail pages. A surface that dies
+  # once and restarts cleanly self-heals and is not paged, which is correct.
+  behind="$(surfaces_behind "$(git rev-parse --short HEAD)")"
+  if [ -z "$behind" ]; then
     mark_ok
     exit 0
   fi
-  stamp "checkout is current but 3418 reports '${live:-unreachable}'; redeploying"
+  stamp "checkout is current but not live on $(git rev-parse --short HEAD): $behind; redeploying"
 else
   stamp "origin/main moved ${local_sha:0:7} -> ${remote_sha:0:7}; deploying"
 fi

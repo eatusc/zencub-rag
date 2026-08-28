@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One deploy: fast-forward main, build both surfaces, restart both, verify.
+# One deploy: fast-forward main, build every surface, restart them all, verify
+# every one of them.
 #
 # Build and restart are deliberately one step. build.sh writes into
 # .next-public and .next-demo while the old servers are still reading them, so
@@ -97,22 +98,48 @@ restart_surface local.zencub-rag-mcp
 # Verify against the stamp rather than a 200, so a server that came back up on
 # the previous bundle still counts as a failed deploy.
 expected="$(git rev-parse --short HEAD)"
+
+port_sha() {
+  curl -fsS --max-time 5 "http://127.0.0.1:$1/api/health" 2>/dev/null \
+    | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p'
+}
+
+# All three sha-stamped surfaces restart at the same moment, so checking a
+# secondary one exactly once is a race: it fails the deploy for being a few
+# seconds slower than 3418 rather than for being broken. Retry briefly, then
+# report what it actually last said.
+wait_for_sha() {
+  local name="$1" port="$2" seen=""
+  for _ in $(seq 1 15); do
+    seen="$(port_sha "$port")" || seen=""
+    if [ "$seen" = "$expected" ]; then
+      echo "==> $name $port live on $seen"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "deployed, but $name $port reports '${seen:-unreachable}', not $expected" >&2
+  return 1
+}
+
 echo "==> Waiting for the public surface to report $expected"
 for _ in $(seq 1 30); do
-  live="$(curl -fsS --max-time 5 http://127.0.0.1:3418/api/health 2>/dev/null \
-    | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p')" || live=""
+  live="$(port_sha 3418)" || live=""
   if [ "$live" = "$expected" ]; then
     echo "==> public 3418 live on $live"
 
     # The instructors surface exposes /api/health too, so it is checked against
     # the same stamp rather than a bare 200.
-    instructors="$(curl -fsS --max-time 5 http://127.0.0.1:3420/api/health 2>/dev/null \
-      | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p')" || instructors=""
-    if [ "$instructors" != "$expected" ]; then
-      echo "deployed, but instructors 3420 reports '${instructors:-unreachable}', not $expected" >&2
-      exit 1
-    fi
-    echo "==> instructors 3420 live on $instructors"
+    wait_for_sha instructors 3420 || exit 1
+
+    # So does the mcp surface. It was restarted here from the day it was added
+    # and never verified, so a build that broke only APP_MODE=mcp -- or an mcp
+    # process that came back on the previous bundle, or did not come back at
+    # all -- was reported as a successful deploy. Found 2026-08-28 by reading
+    # this file's own log, which lists public, instructors and demo and stops.
+    # It matters more than it looks: 3421 is the only surface with no human
+    # watching it, because nobody browses to it.
+    wait_for_sha mcp 3421 || exit 1
 
     # The demo answers 401 on /api/health by design (the PIN gate fails closed),
     # so its liveness check is the unlock page instead.
