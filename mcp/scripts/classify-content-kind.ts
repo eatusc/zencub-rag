@@ -18,6 +18,8 @@
 //                 change: a classifier is not trusted because it says it is.
 //   --dry-run     classify but do not write.
 //   --limit N     stop after N videos.
+//   --smallest    sample the shortest videos rather than the longest, so an
+//                 audit covers the 1-chunk clips and not only livestreams.
 //   --reclassify  include videos that already have a content_kind.
 //
 // Writes go through LANGGRAPH_DATABASE_URL, the owner connection, because the
@@ -36,6 +38,11 @@ const KINDS: ContentKind[] = [
   "promotional",
   "no_content",
 ];
+
+// The two values retrieval gates on. Everything else stays searchable, which is
+// why the plan keeps the Zahabi back-pain AMAs and the Chewjitsu training talk:
+// they are not instruction, and a practitioner still wants them.
+const EXCLUDED_KINDS = new Set<ContentKind>(["event_coverage", "no_content"]);
 
 // ── env ─────────────────────────────────────────────────────────────────────
 
@@ -87,6 +94,11 @@ const EVAL = has("--eval");
 const DRY_RUN = has("--dry-run") || EVAL;
 const RECLASSIFY = has("--reclassify");
 const LIMIT = valueOf("--limit") ? Number(valueOf("--limit")) : undefined;
+// --limit alone always samples the longest videos, which are livestreams and
+// seminars. The 1-chunk clips are a different population entirely -- the plan's
+// bucket 4 -- and they are where song lyrics and one-line instruction both
+// live, so an audit that never sees them proves nothing about them.
+const SMALLEST = has("--smallest");
 
 // ── the prompt ──────────────────────────────────────────────────────────────
 
@@ -105,13 +117,21 @@ instruction - someone explains or demonstrates how to do something: a technique,
 
 training_advice - practitioner-facing but not a technique: injury, recovery, longevity, mindset, motivation, competition nerves, belt progression, gym culture, coaching, training partners, career, health, safety. "My back hurts from training" is answered here.
 
-event_coverage - match footage, competition commentary, highlights, brackets, results, rankings, event vlogs, behind-the-scenes at a tournament. Play-by-play with names and scores. Says who won, not how to do it.
+event_coverage - the competition itself is the product: match footage live or edited, commentary over action, highlights, brackets, results shows, rankings and standings shows, event vlogs, behind-the-scenes at a tournament. The takeaway is who won or who is ranked. Being studio-based and conversational does not change this; a rankings show is two people talking and it is still event_coverage.
 
-interview - conversation ABOUT the sport with a person: history, careers, profiles, news, rules changes, MMA fight analysis. Discussion, not teaching, not live play-by-play.
+interview - a PERSON is the through-line, or the sport is being discussed rather than reported: careers, history, profiles, documentaries, news, rules changes, and retrospective analysis of why a fight or match went the way it did.
 
 promotional - the point is to sell or announce: sales, discount codes, seminars, camps, merchandise, giveaways, book launches, event registration.
 
-no_content - the transcript carries essentially no speech about the subject. Song lyrics over silent footage, crowd noise, gym ambience, counting, venue PA announcements, [music] markers, untranslated foreign-language announcing. If you cannot tell what the video is about FROM THE TRANSCRIPT, this is the answer, however specific the title is.
+no_content - there is essentially no intelligible speech to judge. Song lyrics over silent footage, crowd noise, gym ambience, counting, venue PA announcements, [music] markers, untranslated foreign-language announcing. If you cannot tell what the video is about FROM THE TRANSCRIPT, this is the answer, however specific the title is.
+no_content is about the ABSENCE of speech, never about speech being off-topic, rambling, low quality or uninteresting. If a person is talking in comprehensible sentences, it is not no_content: pick the class that fits what they are actually saying, even if they wander far from grappling.
+
+The event_coverage / interview line is the one that goes wrong most often. Do not decide it by whether the event is live, finished or upcoming, and do not decide it merely because a competition is the topic. Ask what the video IS, not what it is about.
+- You are watching the competition, or a segment produced around it: match footage live or edited, commentary over action, highlights, and brackets, seeding, results, standings or rankings shows. That is event_coverage, including previews and recaps, and including two hosts in a studio running through who is in and who is out.
+- You are watching one person talk about the sport in their own voice: a coach or analyst breaking down styles, weight cuts, striking tendencies, why a fighter tired or why the judges scored it that way; or a profile, career, history or documentary. That is interview, EVEN IF he goes round by round, names scores and says who won, and whether the fight is days away or days past.
+A documentary that recounts past champions and an upcoming bracket while following one athlete's life is about that athlete: interview.
+The test is whether you are watching the competition, or watching somebody talk about it.
+When you are genuinely torn between these two, answer interview.
 
 Reply with JSON only: {"kind":"<one value>","confidence":<0-1>,"why":"<one short sentence quoting the transcript>"}`;
 
@@ -209,6 +229,27 @@ if (!dsn.includes(expectedRef)) {
 const client = new Client({ connectionString: dsn });
 await client.connect();
 
+// Migration 0002 may not be applied yet, and a dry run is part of deciding
+// whether to apply it, so the resume predicate cannot be unconditional. Ask the
+// catalogue rather than assuming either way: with the column present a real run
+// still resumes on content_kind IS NULL, and without it a dry run still works.
+const { rows: colRows } = await client.query<{ exists: boolean }>(
+  `SELECT EXISTS (
+     SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'rag_videos'
+        AND column_name = 'content_kind'
+   ) AS exists`,
+);
+const hasColumn = colRows[0]?.exists === true;
+if (!hasColumn && !DRY_RUN) {
+  throw new Error(
+    "public.rag_videos.content_kind does not exist. Apply mcp/migrations/0002-content-kind.sql before classifying.",
+  );
+}
+if (!hasColumn) {
+  console.log("note: content_kind column not present yet, so this dry run covers every video with chunks.");
+}
+
 const goldIds = GOLD.map((item) => item.video_id);
 const { rows } = await client.query<{
   video_id: string; title: string; channel_name: string | null; chunks: string[];
@@ -224,11 +265,15 @@ const { rows } = await client.query<{
               COALESCE(array_agg(c.text ORDER BY c.chunk_index) FILTER (WHERE c.text IS NOT NULL), '{}') AS chunks
          FROM public.rag_videos v
          JOIN public.rag_transcript_chunks c ON c.video_id = v.video_id
-        WHERE ($2::boolean OR v.content_kind IS NULL)
+        WHERE ($1::boolean OR ${hasColumn ? "v.content_kind IS NULL" : "true"})
         GROUP BY v.video_id, v.title, v.channel_name
-        ORDER BY count(c.*) DESC
+        ORDER BY count(c.*) ${SMALLEST ? "ASC" : "DESC"}
         ${LIMIT ? `LIMIT ${Number(LIMIT)}` : ""}`,
-  EVAL ? [goldIds] : [null, RECLASSIFY],
+  // The non-eval branch used to pass an unused $1, which Postgres cannot type,
+  // so it failed before issuing a single model call. Found 2026-08-28 on the
+  // first real dry run: every prior run of this script was --eval, which takes
+  // the other branch, so the classification path had never executed at all.
+  EVAL ? [goldIds] : [RECLASSIFY],
 );
 
 console.log(`${EVAL ? "EVAL" : DRY_RUN ? "DRY RUN" : "CLASSIFY"}: ${rows.length} videos, model=${MODEL}`);
@@ -236,6 +281,8 @@ console.log(`${EVAL ? "EVAL" : DRY_RUN ? "DRY RUN" : "CLASSIFY"}: ${rows.length}
 const expectedByid = new Map(GOLD.map((item) => [item.video_id, item]));
 let done = 0;
 let correct = 0;
+let gateFalseExcludes = 0;
+const verdicts = new Map<string, Verdict>();
 const failures: string[] = [];
 const mistakes: string[] = [];
 const tally = new Map<string, number>();
@@ -254,6 +301,7 @@ for (const row of rows) {
   }
 
   tally.set(verdict.kind, (tally.get(verdict.kind) ?? 0) + 1);
+  verdicts.set(row.video_id, verdict);
 
   if (EVAL) {
     const gold = expectedByid.get(row.video_id);
@@ -263,7 +311,15 @@ for (const row of rows) {
       mistakes.push(`${row.video_id} "${String(row.title).slice(0, 46)}" expected=${gold.expected} got=${verdict.kind}\n        gold: ${gold.because}\n        model: ${verdict.why}`);
     }
     console.log(`  ${ok ? "OK  " : "MISS"}  ${verdict.kind.padEnd(15)} ${String(row.title).slice(0, 52)}`);
-  } else if (!DRY_RUN) {
+  } else if (DRY_RUN) {
+    // A dry run that prints only a distribution cannot be audited, and the
+    // whole point of one here is to check the exclusions on videos the gold set
+    // has never seen. Flag which way each row falls and carry the model's own
+    // reason, so a wrong EXCLUDE is visible without a second query.
+    const mark = EXCLUDED_KINDS.has(verdict.kind) ? "EXCLUDE" : "keep   ";
+    console.log(`  ${mark} ${verdict.kind.padEnd(15)} ${row.video_id}  ${String(row.title).slice(0, 46)}`);
+    console.log(`          ${verdict.why.slice(0, 160)}`);
+  } else {
     // Committed per video. If this dies at 80%, the 80% is kept and a re-run
     // resumes on content_kind IS NULL.
     await client.query(
@@ -286,6 +342,46 @@ for (const kind of KINDS) console.log(`  ${kind.padEnd(16)} ${tally.get(kind) ??
 
 if (EVAL) {
   console.log(`\ngold set: ${correct}/${rows.length} correct`);
+
+  // Exact-class accuracy is not the number that matters. content_kind drives
+  // exactly one decision -- does retrieval keep this video -- and only two of
+  // the six values are excluded. A confusion between instruction and interview
+  // is invisible to that decision; a confusion between interview and
+  // event_coverage silently deletes a video from the corpus. Reporting one
+  // headline percentage hides which kind just happened, which is how 24/28
+  // read as "nearly there" while two keepers were being thrown away.
+  //
+  // The two directions are not equally bad, so they are counted separately:
+  //   false exclude - gold keeps it, model excludes it. Destroys content.
+  //                   Zahabi's back-pain coaching disappears and no query can
+  //                   reach it again.
+  //   false keep    - gold excludes it, model keeps it. Costs precision only:
+  //                   some event chatter stays retrievable, which is the
+  //                   status quo today.
+  console.log("\ngate (the decision content_kind actually drives):");
+  let gateOk = 0;
+  const falseExcludes: string[] = [];
+  const falseKeeps: string[] = [];
+  for (const [id, verdict] of verdicts) {
+    const gold = expectedByid.get(id);
+    if (!gold) continue;
+    const goldExcluded = EXCLUDED_KINDS.has(gold.expected);
+    const gotExcluded = EXCLUDED_KINDS.has(verdict.kind);
+    if (goldExcluded === gotExcluded) {
+      gateOk += 1;
+    } else if (goldExcluded) {
+      falseKeeps.push(`${id} ${gold.expected} -> ${verdict.kind}`);
+    } else {
+      falseExcludes.push(`${id} ${gold.expected} -> ${verdict.kind}`);
+    }
+  }
+  console.log(`  keep/exclude correct: ${gateOk}/${rows.length}`);
+  console.log(`  false EXCLUDES (destroys content): ${falseExcludes.length}`);
+  for (const item of falseExcludes) console.log(`    - ${item}`);
+  console.log(`  false keeps (costs precision only): ${falseKeeps.length}`);
+  for (const item of falseKeeps) console.log(`    - ${item}`);
+  gateFalseExcludes = falseExcludes.length;
+
   if (mistakes.length > 0) {
     console.log("\nmisses:");
     for (const miss of mistakes) console.log(`  - ${miss}`);
@@ -296,11 +392,23 @@ if (failures.length > 0) {
   for (const failure of failures.slice(0, 20)) console.log(`  - ${failure}`);
 }
 
-// Non-zero on any failure, and on a gold score below the bar. Silence must not
-// be the same signal as success.
+// Non-zero on any failure, on a gold score below the bar, and on any false
+// exclude. Silence must not be the same signal as success.
 const GOLD_BAR = 0.85;
-const failed = failures.length > 0 || (EVAL && rows.length > 0 && correct / rows.length < GOLD_BAR);
-if (EVAL && rows.length > 0 && correct / rows.length < GOLD_BAR) {
+// A false exclude is not a percentage point, it is a video no query can reach
+// again. Two of them are exactly why the last run was stopped rather than
+// shipped, so the bar is zero rather than a rate. If this cannot be met the
+// answer is a better prompt or a narrower gate, not a looser threshold.
+const MAX_FALSE_EXCLUDES = 0;
+
+const scored = EVAL && rows.length > 0;
+const belowBar = scored && correct / rows.length < GOLD_BAR;
+const destructive = scored && gateFalseExcludes > MAX_FALSE_EXCLUDES;
+
+if (belowBar) {
   console.log(`\nFAIL: gold accuracy ${(100 * correct / rows.length).toFixed(0)}% is below the ${100 * GOLD_BAR}% bar.`);
 }
-process.exit(failed ? 1 : 0);
+if (destructive) {
+  console.log(`\nFAIL: ${gateFalseExcludes} false exclude(s), bar is ${MAX_FALSE_EXCLUDES}. Each one deletes a video a practitioner should have been able to find. Do not classify the corpus on this prompt.`);
+}
+process.exit(failures.length > 0 || belowBar || destructive ? 1 : 0);

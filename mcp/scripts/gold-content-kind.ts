@@ -42,10 +42,26 @@ export const GOLD: GoldItem[] = [
     expected: "instruction",
     because: "'I slam on that handgun choke... drive my knee over and across'. One chunk, but it is a taught technique.",
   },
+  // Relabelled instruction -> interview on 2026-08-28 after re-reading all ten
+  // chunks. The original note said "the subject is how to do the technique";
+  // the transcript says otherwise. Chunks 0-6 and 9 are Bernardo Faria
+  // interviewing Josh Lean about quitting his job, YouTube ad revenue and mean
+  // comments; only chunks 7-8 teach anything ("going to that butterfly ashi
+  // position... use my feet to keep their leg extended"). Eight of ten chunks
+  // are career talk, so interview is the honest per-video label.
+  //
+  // The model was right here and the label was wrong, which is worth stating
+  // plainly rather than counting as a miss. It also changes nothing about the
+  // gate: instruction and interview are both KEPT, so this disagreement never
+  // reaches a retrieval decision either way.
+  //
+  // It does expose the real limit of a per-video field: this video genuinely
+  // contains two chunks a practitioner searching "ankle lock" should find.
+  // A per-chunk kind would answer that; content_kind cannot.
   {
     video_id: "1xo4quTN0bo",
-    expected: "instruction",
-    because: "Ankle lock breakdown with a guest. Instructional interview: the subject is how to do the technique.",
+    expected: "interview",
+    because: "Bernardo Faria interviewing Josh Lean: 'I made like 700 bucks in ad revenue on YouTube and I was like, I'm quitting'. 8 of 10 chunks are career talk; only 7-8 teach a technique.",
   },
   { video_id: "Uw0qzqqd1bE", expected: "instruction", because: "Seminar footage, 13 technique cards." },
   { video_id: "pzjMS7-SBls", expected: "instruction", because: "Double wrist lock mini-seminar, 11 cards." },
@@ -117,6 +133,22 @@ export const GOLD: GoldItem[] = [
     video_id: "KlZod5spqts",
     expected: "interview",
     because: "Zahabi's round-by-round MMA fight analysis. Analysis of an event, conversational, no instruction.",
+  },
+
+  // Both of the following were found on 2026-08-28 by dry-running the top 60
+  // videos by chunk count and auditing every EXCLUDE, not by inventing cases.
+  // The classifier scored 28/28 on the gold set at the time and still produced
+  // these two false excludes, which is the argument for auditing held-out rows
+  // rather than trusting a gold score.
+  {
+    video_id: "cj0kftppPvM",
+    expected: "interview",
+    because: "Zahabi pre-fight breakdown. Came back event_coverage, which would have deleted it. It is style and preparation analysis, not results: 'probably was the weight cut killing him... now he's training in Big Bear' and 'the teep is like the jab and he loves to jab'. Proves the boundary cannot be decided on whether the fight has happened yet.",
+  },
+  {
+    video_id: "5HiWBT_U_OM",
+    expected: "interview",
+    because: "TriStar post-fight AMA on matchmaking and careers. Came back no_content because it rambles, which is a misuse of that class: the transcript is fluent English about fighters ('Arnold Allen... his title fight time is coming'). no_content means no intelligible speech, not off-topic speech.",
   },
 
   // ── promotional ───────────────────────────────────────────────────────────
