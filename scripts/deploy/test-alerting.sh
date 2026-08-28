@@ -85,7 +85,50 @@ check "last-paged stays 0"       "$(sed -n 2p "$STATE")"     "0"
 diverge; DEPLOY_SHOULD_FAIL=1 run
 check "next run retries the page" "$(pages)"                 "3"
 
-echo "== 5. failure exit code reaches launchd =="
+echo "== 5. a feature branch is parked, not failed =="
+rm -f "$STATE"; : > "$PAGES_FILE"
+git checkout -q -b feature-x
+diverge; run
+check "one page sent"            "$(pages)"                  "1"
+check "state is parked"          "$(sed -n 1p "$STATE")"     "parked"
+grep -q "PARKED" "$PAGES_FILE" && ok "page says PARKED" || bad "page says PARKED"
+grep -q "FAILED" "$PAGES_FILE" && bad "parked page must not say FAILED" || ok "parked is never reported as a failure"
+grep -q "feature-x" "$PAGES_FILE" && ok "page names the branch" || bad "page names the branch"
+
+echo "== 6. parked does not re-page at the failure cadence =="
+diverge; run
+check "still one page"           "$(pages)"                  "1"
+check "state stays parked"       "$(sed -n 1p "$STATE")"     "parked"
+
+echo "== 7. returning to main resumes deploys without a recovery page =="
+git checkout -q main
+diverge; DEPLOY_SHOULD_FAIL=0 run
+check "no extra page"            "$(pages)"                  "1"
+check "state is ok"              "$(sed -n 1p "$STATE")"     "ok"
+
+echo "== 8. a parked checkout never runs deploy.sh =="
+git checkout -q feature-x
+rm -f "$STATE"; : > "$PAGES_FILE"; : > "$ROOT/deploy-ran"
+cat > scripts/deploy/deploy.sh <<'EOS'
+#!/usr/bin/env bash
+echo ran >> "$ROOT_MARK"
+EOS
+chmod +x scripts/deploy/deploy.sh
+diverge; ROOT_MARK="$ROOT/deploy-ran" run
+check "deploy.sh not invoked"    "$(wc -l < "$ROOT/deploy-ran" | tr -d ' ')" "0"
+git checkout -q main
+
+echo "== 9. failure exit code reaches launchd =="
+cat > scripts/deploy/deploy.sh <<'EOS'
+#!/usr/bin/env bash
+echo "==> Building public surface"
+if [ "${DEPLOY_SHOULD_FAIL:-0}" = "1" ]; then
+  echo "refusing to deploy: something broke" >&2
+  exit 1
+fi
+echo "==> Built."
+EOS
+chmod +x scripts/deploy/deploy.sh
 diverge
 ( cd "$ROOT/repo" && DEPLOY_SHOULD_FAIL=1 ./scripts/deploy/autodeploy.sh >/dev/null 2>&1 )
 check "exit code non-zero"       "$?"                        "1"

@@ -22,6 +22,10 @@ STATE_FILE="$LOG_DIR/autodeploy.state"
 # is the failure this whole mechanism exists to prevent, so it re-pages rather
 # than alerting once and giving up.
 REMIND_AFTER=21600 # 6 hours
+# A parked checkout is a normal development state, so it is reported once a day
+# rather than at the failure cadence. Quiet enough to ignore for an afternoon,
+# loud enough that it cannot be forgotten for a week.
+PARKED_REMIND_AFTER=86400 # 24 hours
 
 stamp() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
 
@@ -87,6 +91,38 @@ log: $LOG_DIR/autodeploy.log"; then
   fi
 }
 
+# A checkout on a feature branch is a development state, not a broken deploy, and
+# paging it as a failure every 6 hours would train the alert to be ignored. But
+# it is not nothing either: deploys are paused while it lasts, and that is
+# exactly what went unnoticed for an hour on 2026-08-28. So it gets its own
+# quieter signal, once a day, that says what it is.
+mark_parked() {
+  local branch="$1"
+  local prev last elapsed
+  prev="$(read_state)"
+  last="$(read_last_page)"
+  [ -n "$last" ] || last=0
+  elapsed=$(( now - last ))
+
+  if [ "$prev" = "parked" ] && [ "$elapsed" -lt "$PARKED_REMIND_AFTER" ]; then
+    stamp "parked on '$branch'; deploys paused, last notice ${elapsed}s ago"
+    write_state parked "$last"
+    return
+  fi
+
+  if page "zencub-rag autodeploy PARKED
+checkout is on '$branch', not main, so deploys are paused.
+This is not a failure. Nothing is being deployed until the branch merges or the
+checkout returns to main.
+
+origin/main: $(git rev-parse --short origin/main 2>/dev/null || echo unknown)
+3418 reports: $(live_sha || echo unreachable)"; then
+    write_state parked "$now"
+  else
+    write_state parked "$last"
+  fi
+}
+
 live_sha() {
   curl -fsS --max-time 5 http://127.0.0.1:3418/api/health 2>/dev/null \
     | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p'
@@ -95,6 +131,15 @@ live_sha() {
 git fetch --quiet origin main
 local_sha="$(git rev-parse HEAD)"
 remote_sha="$(git rev-parse origin/main)"
+branch="$(git rev-parse --abbrev-ref HEAD)"
+
+# Checked here rather than left to deploy.sh's own guard, so the difference
+# between "parked on a branch" and "the build broke" is decided before anything
+# runs, and the two never share an alert.
+if [ "$branch" != "main" ]; then
+  mark_parked "$branch"
+  exit 0
+fi
 
 if [ "$local_sha" = "$remote_sha" ]; then
   # A current checkout does not mean current servers: a build can fail after the
