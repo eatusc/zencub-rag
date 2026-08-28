@@ -34,6 +34,18 @@ classified_count() {
 # Videos this script can actually classify. The old pages said "of 3032", the
 # whole table, which includes ~187 videos with no transcript that are never
 # candidates -- so a finished run would have read as stopping 187 short.
+# In --verify-excludes mode the label count does not move -- labels are
+# overwritten, not added -- so counting them would report a verify run as having
+# done nothing. Count the second opinions instead.
+verified_count() {
+  psql "$DSN" -tAc "SELECT count(content_kind_verified_model) FROM public.rag_videos" 2>/dev/null || echo "?"
+}
+
+excluded_count() {
+  psql "$DSN" -tAc "SELECT count(*) FROM public.rag_videos
+                     WHERE content_kind IN ('event_coverage','no_content','off_topic')" 2>/dev/null || echo "?"
+}
+
 classifiable_count() {
   psql "$DSN" -tAc "SELECT count(DISTINCT v.video_id) FROM public.rag_videos v
                       JOIN public.rag_transcript_chunks c ON c.video_id = v.video_id" 2>/dev/null || echo "?"
@@ -50,6 +62,10 @@ if [ -z "$DSN" ]; then
   echo "no LANGGRAPH_DATABASE_URL in .env.local" >&2
   exit 2
 fi
+
+# Which pass this is, so the pages describe what actually happened.
+MODE="classify"
+case " $* " in *" --verify-excludes "*) MODE="verify" ;; esac
 
 CONTENT_KIND_MODEL="${CONTENT_KIND_MODEL:-anthropic/claude-haiku-4.5}" \
   node --experimental-strip-types mcp/scripts/classify-content-kind.ts "$@" >>"$LOG" 2>&1 &
@@ -78,11 +94,18 @@ wait "$RUN_PID"
 status=$?
 kill "$WATCHDOG_PID" 2>/dev/null
 
-if [ "$status" -eq 0 ]; then
+if [ "$status" -eq 0 ] && [ "$MODE" = "verify" ]; then
+  page "zencub-rag content_kind VERIFY DONE
+second opinions recorded: $(verified_count)
+still excluded after verification: $(excluded_count) of $(classifiable_count)
+
+$(grep -c '^  RESCUED' "$LOG" 2>/dev/null || echo 0) exclusions overturned and returned to the corpus:
+$(grep '^  RESCUED' "$LOG" | head -12)"
+elif [ "$status" -eq 0 ]; then
   page "zencub-rag content_kind classify DONE
 classified: $(classified_count) of $(classifiable_count) classifiable
 
-$(sed -n '/^distribution:/,$p' "$LOG" | head -10)"
+$(sed -n '/^distribution:/,$p' "$LOG" | head -12)"
 else
   page "zencub-rag content_kind classify FAILED (exit $status)
 classified before dying: $(classified_count) of $(classifiable_count) classifiable
