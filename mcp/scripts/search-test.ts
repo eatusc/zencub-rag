@@ -15,6 +15,7 @@ type Hit = {
   deep_link: string | null;
   deep_link_precision: string;
   has_technique_cards: boolean;
+  content_kind?: string | null;
   start_seconds: number;
 };
 type SearchBody = {
@@ -22,6 +23,7 @@ type SearchBody = {
   retrieved?: number;
   returned?: number;
   removed_by_filter?: Record<string, number>;
+  unclassified_content_kind?: number;
   warnings?: string[];
   // Reported by the app's pipeline so a caller can tell a hybrid result from a
   // text-only fallback without inferring it from result quality.
@@ -100,6 +102,26 @@ check("filter=none removes nothing", Object.keys(none.removed_by_filter ?? {}).l
 check("filter=flagged removes something on a polluted query", Object.keys(flagged.removed_by_filter ?? {}).length > 0,
   JSON.stringify(flagged.removed_by_filter));
 check("filter=strict keeps only carded videos", (strict.results ?? []).every((h) => h.has_technique_cards));
+
+// content_kind gate. Written so it holds while classification is still running:
+// the invariants are about what curated may never do, not about a corpus that
+// is fully labelled yet.
+const curated = await search({ query: q, filter: "curated", limit: 10 });
+check("filter=curated is accepted", Array.isArray(curated.results));
+check("curated reports how much is unclassified",
+  typeof curated.unclassified_content_kind === "number",
+  String(curated.unclassified_content_kind));
+check("curated never returns an excluded content_kind",
+  (curated.results ?? []).every(
+    (h) => h.content_kind !== "event_coverage" && h.content_kind !== "no_content"),
+  JSON.stringify((curated.results ?? []).map((h) => h.content_kind)));
+check("curated only ever removes for a content_kind reason",
+  Object.keys(curated.removed_by_filter ?? {}).every((k) => k.startsWith("content_kind_")),
+  JSON.stringify(curated.removed_by_filter));
+// NULL must survive the gate: unclassified is not a verdict.
+check("curated keeps unclassified videos",
+  (curated.results ?? []).length > 0 || (curated.unclassified_content_kind ?? 0) === 0,
+  `returned ${(curated.results ?? []).length}, unclassified ${curated.unclassified_content_kind}`);
 check("strict removes at least as much as flagged",
   (strict.results ?? []).length <= (none.results ?? []).length);
 

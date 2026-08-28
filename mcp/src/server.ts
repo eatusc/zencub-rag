@@ -504,6 +504,7 @@ server.registerTool(
  */
 const FILTERS = {
   none: "Nothing removed. This is what search.zencub.com returns today.",
+  curated: "Removes videos classified content_kind = event_coverage or no_content. Unclassified videos are kept, because NULL is 'not looked at yet', not 'fine'.",
   flagged: "Removes videos the pipeline marked status=failed, martial_arts_relevance=no.",
   instructional: "Removes videos that produced zero technique cards.",
   strict: "Removes both of the above.",
@@ -518,8 +519,15 @@ type VideoFacts = {
   platform: string | null;
   status: string | null;
   martial_arts_relevance: string | null;
+  content_kind: string | null;
   technique_count: number | null;
 };
+
+// The only two content_kind values retrieval drops. Everything else stays:
+// training_advice, interview and promotional are all things a practitioner may
+// legitimately be searching for, and the plan's whole argument against the
+// relevance flag was that it destroyed the first two.
+const EXCLUDED_CONTENT_KINDS = new Set(["event_coverage", "no_content"]);
 
 function excludedBy(facts: VideoFacts | undefined, filter: FilterName): string | null {
   if (!facts || filter === "none") return null;
@@ -527,6 +535,14 @@ function excludedBy(facts: VideoFacts | undefined, filter: FilterName): string |
   const noCards = (facts.technique_count ?? 0) === 0;
   if ((filter === "flagged" || filter === "strict") && flagged) return "flagged_non_relevant";
   if ((filter === "instructional" || filter === "strict") && noCards) return "no_technique_cards";
+  // NULL is deliberately not excluded. An unclassified video is a video nobody
+  // has judged, which is a different statement from one judged unsuitable, and
+  // conflating those two is exactly how martial_arts_relevance quietly dropped
+  // 150 videos it had never run on.
+  if (filter === "curated" && facts.content_kind !== null
+      && EXCLUDED_CONTENT_KINDS.has(facts.content_kind)) {
+    return `content_kind_${facts.content_kind}`;
+  }
   return null;
 }
 
@@ -541,8 +557,14 @@ server.registerTool(
       mode: z.enum(["text", "semantic", "both"]).default("both")
         .describe("Which retrieval side to use. 'both' lets the app fuse keyword and embeddings, and is almost always right; 'text' and 'semantic' pin one side but still get the rerank and diversity pass."),
       limit: z.number().int().min(1).max(25).default(10).describe("Results to return."),
-      filter: z.enum(["none", "flagged", "instructional", "strict"]).default("flagged")
-        .describe("Which non-instructional content to drop. 'none' reproduces the live site."),
+      // Default stays 'flagged' until the corpus is fully classified. 'curated'
+      // is the better gate and is the intended default, but on a partly
+      // classified corpus it silently degrades to 'none', which would put
+      // competition commentary back at the top of exactly the queries this was
+      // built to fix. Flip the default in the same change that verifies
+      // coverage, not before.
+      filter: z.enum(["none", "curated", "flagged", "instructional", "strict"]).default("flagged")
+        .describe("Which non-instructional content to drop. 'curated' uses the content_kind classification and is the intended default once the corpus is fully classified; 'none' reproduces the live site."),
     },
   },
   async ({ query, mode, limit, filter }) => {
@@ -568,7 +590,7 @@ server.registerTool(
     try {
       const result = await db.readOnly(
         `SELECT video_id, title, channel_name, instructor_name, video_url, platform,
-                status, martial_arts_relevance, technique_count
+                status, martial_arts_relevance, content_kind, technique_count
          FROM rag_mcp.v_videos WHERE video_id = ANY($1::text[])`,
         [videoIds],
       );
@@ -599,6 +621,13 @@ server.registerTool(
       ...meta,
       retrieved: hits.length,
       removed_by_filter: removed,
+      // How many of the retrieved videos the classifier has not judged yet.
+      // Without this a caller cannot tell "the gate found nothing to drop"
+      // from "the gate has not run on any of this", which are very different
+      // claims about the same empty removed_by_filter.
+      unclassified_content_kind: hits.filter(
+        (hit) => (facts.get(hit.video_id)?.content_kind ?? null) === null,
+      ).length,
       returned: page.length,
       warnings: warnings.length > 0 ? warnings : undefined,
       results: page.map((hit) => {
@@ -613,6 +642,7 @@ server.registerTool(
           end_seconds: hit.end_seconds,
           ...link,
           has_technique_cards: (video?.technique_count ?? 0) > 0,
+          content_kind: video?.content_kind ?? null,
           text: hit.text,
         };
       }),
