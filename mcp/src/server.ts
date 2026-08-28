@@ -557,23 +557,30 @@ server.registerTool(
       mode: z.enum(["text", "semantic", "both"]).default("both")
         .describe("Which retrieval side to use. 'both' lets the app fuse keyword and embeddings, and is almost always right; 'text' and 'semantic' pin one side but still get the rerank and diversity pass."),
       limit: z.number().int().min(1).max(25).default(10).describe("Results to return."),
-      // Default stays 'flagged' until the corpus is fully classified. 'curated'
-      // is the better gate and is the intended default, but on a partly
-      // classified corpus it silently degrades to 'none', which would put
-      // competition commentary back at the top of exactly the queries this was
-      // built to fix. Flip the default in the same change that verifies
-      // coverage, not before.
-      filter: z.enum(["none", "curated", "flagged", "instructional", "strict"]).default("flagged")
-        .describe("Which non-instructional content to drop. 'curated' uses the content_kind classification and is the intended default once the corpus is fully classified; 'none' reproduces the live site."),
+      // 'curated' became the default once coverage was real: 2,845 of 2,845
+      // videos with transcripts are classified, by local Qwen with every
+      // exclusion re-checked by Haiku. Before that it would have degraded
+      // silently to 'none'.
+      filter: z.enum(["none", "curated", "flagged", "instructional", "strict"]).default("curated")
+        .describe("Which non-instructional content to drop. 'curated' uses the content_kind classification (drops event_coverage, no_content and off_topic) and is the recommended setting; 'none' reproduces the live site. 'flagged', 'instructional' and 'strict' are the older signals, kept for comparison: they answer different questions and each drops content a practitioner wants."),
     },
   },
   async ({ query, mode, limit, filter }) => {
-    // Over-fetching no longer widens the pool: the app's rerank narrows to its
-    // own result limit before this route slices, so asking for triple returns
-    // the same rows. Ask for what was requested and let the pipeline disclose
-    // when it returned fewer. Retrieval now runs an embedding plus a rerank, so
-    // it is slower than the old two-endpoint call; the timeout allows for that.
-    const { hits, warnings, meta } = await retrieve(mode, query, limit, 45_000);
+    // Over-fetch whenever a filter is active, because filtering happens after
+    // retrieval and would otherwise shrink the result set: "heel hook defense"
+    // at limit 5 returned 3, having dropped two event_coverage hits with
+    // nothing behind them to promote.
+    //
+    // A previous comment here claimed over-fetching "no longer widens the pool"
+    // because the rerank narrows first. Measured 2026-08-28 against the running
+    // pipeline, that is wrong: limit 5 returns 5 rows, limit 15 returns 12. The
+    // pipeline does cap out around 12, so asking for more than that buys
+    // nothing, which is why this is capped rather than unbounded.
+    //
+    // Retrieval runs an embedding plus a rerank, so it is slower than the old
+    // two-endpoint call; the timeout allows for that.
+    const fetchLimit = filter === "none" ? limit : Math.min(25, Math.max(limit, limit * 3));
+    const { hits, warnings, meta } = await retrieve(mode, query, fetchLimit, 45_000);
     if (hits.length === 0) {
       return json({
         query,
@@ -620,6 +627,10 @@ server.registerTool(
       // text-only fallback rather than inferring it from result quality.
       ...meta,
       retrieved: hits.length,
+      // What was asked of retrieval, which is larger than `limit` when a filter
+      // is on. Without it, "retrieved 12, returned 5" reads as the filter having
+      // dropped 7 when it dropped none.
+      requested_from_retrieval: fetchLimit,
       removed_by_filter: removed,
       // How many of the retrieved videos the classifier has not judged yet.
       // Without this a caller cannot tell "the gate found nothing to drop"

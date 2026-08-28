@@ -29,6 +29,7 @@ type SearchBody = {
   // text-only fallback without inferring it from result quality.
   retrieval_mode?: string;
   reranked?: boolean;
+  filter?: string;
 };
 
 let passed = 0;
@@ -118,6 +119,25 @@ check("curated never returns an excluded content_kind",
 check("curated only ever removes for a content_kind reason",
   Object.keys(curated.removed_by_filter ?? {}).every((k) => k.startsWith("content_kind_")),
   JSON.stringify(curated.removed_by_filter));
+// The gate must not shrink the page. Filtering happens after retrieval, so
+// without over-fetching "heel hook defense" at limit 5 returned 3.
+const fullPage = await search({ query: "heel hook defense", filter: "curated", limit: 5 });
+check("curated still returns a full page",
+  (fullPage.results ?? []).length === 5,
+  `returned ${(fullPage.results ?? []).length}, removed ${JSON.stringify(fullPage.removed_by_filter ?? {})}`);
+check("a filtered search over-fetches to make room",
+  (fullPage.retrieved ?? 0) > 5, `retrieved ${fullPage.retrieved}`);
+// The whole point of the exercise: competition commentary must not win a
+// defensive-technique query.
+check("curated drops event coverage from 'heel hook defense'",
+  (fullPage.results ?? []).every((h) => h.content_kind !== "event_coverage"),
+  JSON.stringify((fullPage.results ?? []).map((h) => h.content_kind)));
+
+// The default is what most callers get, so it is worth asserting rather than
+// assuming it was flipped.
+const defaulted = await search({ query: "heel hook defense", limit: 5 });
+check("default filter is curated", defaulted.filter === "curated", String(defaulted.filter));
+
 // NULL must survive the gate: unclassified is not a verdict.
 check("curated keeps unclassified videos",
   (curated.results ?? []).length > 0 || (curated.unclassified_content_kind ?? 0) === 0,
