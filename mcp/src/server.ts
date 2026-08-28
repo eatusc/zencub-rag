@@ -21,6 +21,7 @@ import { z } from "zod";
 import { CorpusDatabase, loadConfig, loadEnv, type QueryResult } from "./db.ts";
 import { guardSql, withRowLimit } from "./sqlGuard.ts";
 import { deepLink, retrievalBaseUrl, retrieve, type RetrievalHit } from "./search.ts";
+import { stitchTranscript } from "./transcript.ts";
 import { FilterVocabulary } from "./enums.ts";
 
 loadEnv();
@@ -450,6 +451,7 @@ server.registerTool(
         return failure("No transcript chunks in that window. The video may have no transcript; check has_transcript in v_videos.");
       }
       const first = result.rows[0];
+      const stitched = stitchTranscript(result.rows.map((row) => String(row.text)));
       return json({
         video_id,
         video_title: first.video_title,
@@ -462,7 +464,16 @@ server.registerTool(
           end_seconds: result.rows[result.rowCount - 1].end_seconds,
         },
         chunk_count: result.rowCount,
-        transcript: result.rows.map((row) => String(row.text)).join(" "),
+        // Chunks overlap by 6-8 seconds on purpose, so a plain join repeats a
+        // sentence at every boundary. Stitching removes the duplicate and
+        // reports any boundary it could not resolve, rather than leaving a
+        // caller to notice the repetition itself.
+        transcript: stitched.transcript,
+        ...(stitched.unmatched_boundaries > 0
+          ? {
+              note: `${stitched.unmatched_boundaries} of ${result.rowCount - 1} chunk boundaries had no detectable overlap and may repeat text.`,
+            }
+          : {}),
         chunks: result.rows.map((row) => ({
           chunk_index: row.chunk_index,
           start_seconds: row.start_seconds,

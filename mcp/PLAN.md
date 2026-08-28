@@ -168,8 +168,17 @@ Two options, decide by spike, do not write a third implementation.
       and the deep-link field need, with no second lookup.
 
 **Decision: B.** The service-role key stays inside the Next process, the MCP
-server holds no credential beyond `zencub_mcp_reader`, and both surfaces share
-exactly one retrieval path so they cannot diverge. Enrichment beyond what the
+server holds no credential beyond `zencub_mcp_reader`.
+
+> **Correction, 2026-08-28.** The claim that followed here -- "both surfaces
+> share exactly one retrieval path so they cannot diverge" -- is **false as
+> built**, and was never checked. `/api/rag/search` is FTS only
+> (`search_rag_transcript_chunks`) and `/api/rag/vector-search` is vector only.
+> Neither is the app's hybrid pipeline. `buildCandidates`, `rerankCandidates`
+> and `enrichCandidates` in `ragPipeline.ts` are reached **only** by
+> `/api/rag/ask`, which always generates an answer and so cannot be used here.
+> The credential argument for HTTP still stands; the no-divergence argument does
+> not. See "What search_transcripts is actually doing" below. Enrichment beyond what the
 endpoint returns is done through the reader role against `rag_mcp`, which keeps
 the split clean: HTTP for ranking, reader role for corpus facts.
 
@@ -193,6 +202,68 @@ the split clean: HTTP for ranking, reader role for corpus facts.
 - [ ] Log to `rag_search_logs` under a distinct action so MCP traffic does not
       pollute the public-site analytics, and so this server's own retrieval
       quality is measurable next to the site's.
+
+      **This is not merely missing, it is actively causing harm.** Both routes
+      call `logSearch` themselves, so every `search_transcripts` call already
+      writes two rows tagged `action=keyword` and `action=semantic`,
+      indistinguishable from a person using search.zencub.com. Measured
+      2026-08-28: **119 rows in three hours**, every one of them a test query
+      from this session ("knee cut pass", "why do I keep getting my guard
+      passed"). Site analytics are being contaminated right now.
+
+### What `search_transcripts` is actually doing, measured 2026-08-28
+
+Semantic retrieval **is** running: `/api/rag/vector-search` returns real cosine
+similarities (0.53-0.61 on the queries probed). The problem is the fusion.
+
+Both endpoints return single-mode lists, and `fuse()` is plain RRF at k=60. When
+both return 10 results with no overlap, **every item ties with its opposite
+number**: rank *i* in either list scores `1/(60+i+1)`. JavaScript's sort is
+stable and the text list is passed first, so **text wins every tie**. The output
+is not a blend, it is a zipper with keyword permanently on top.
+
+Measured across eight queries, source of each of the top 8 results:
+
+| query | text hits | vector hits | top 1 | pattern |
+| --- | --- | --- | --- | --- |
+| heel hook defense | 10 | 10 | text | `text,vec,text,vec,text,vec,text,vec` |
+| kimura from side control | 10 | 10 | text | `text,vec,text,vec,text,vec,text,vec` |
+| training with a much bigger partner | 4 | 10 | text | `text,vec,text,vec,text,vec,text,vec` |
+| how do I stop gassing out during rolls | **2** | 10 | both | `both,both,vec,vec,vec,vec,vec,vec` |
+| why do I keep getting my guard passed | 10 | 10 | both | 3 of 8 text |
+| berimbolo | 10 | 10 | both | 2 of 8 text |
+
+The alternation is exact, which is the proof: it is an artefact of tie-breaking,
+not a ranking judgement.
+
+**This explains the observed quality directly.** Queries whose literal words
+appear a lot in commentary ("heel hook defense") give FTS ten confident-looking
+matches, and the zipper hands them slots 1, 3, 5 and 7 -- which is why
+"2026 Polaris 37" was the top result for a defensive-technique question, while
+the vector list's own top hit was an instructional video. Queries phrased the way
+a person actually speaks ("how do I stop gassing out") return almost nothing from
+FTS, so semantic dominates by default and the results are good. **The tool works
+best exactly where keyword search fails, and worst where keyword search returns
+plenty of plausible junk.**
+
+What is missing compared with the real pipeline, all of it in `ragPipeline.ts`:
+
+- **The technique-card path.** `metadataResults` searches `rag_techniques` on
+  name, position, type and gi_nogi first and maps matching time ranges back onto
+  chunks. `search_transcripts` never touches it, so a query naming a technique
+  does not benefit from the structured cards at all.
+- **Reranking.** `rerankCandidates` is not called, so nothing reorders the two
+  lists by relevance to the query.
+- **Cross-mode diversity.** `capPerVideo` runs inside each route separately, so
+  one video can occupy several fused slots.
+
+- [ ] **Fix the fusion, and stop pretending it is the app's.** Options, in order
+      of preference: (a) add a retrieval-only mode to `/api/rag/ask` and call
+      the real pipeline, which restores the locked decision as written;
+      (b) weight the lists rather than tying them, and break ties toward
+      semantic; (c) at minimum, report which mode produced each hit so a caller
+      can see the zipper. (a) is the only one that also buys the technique-card
+      path and the rerank.
 
 ### Blocked on the relevance gate
 

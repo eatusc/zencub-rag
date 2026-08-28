@@ -537,3 +537,87 @@ errors, counted, non-fatal, non-zero exit, and the gold bar refused the run.
   action, so MCP retrieval quality is still not measurable next to the site's.
 - Phase 3 failure reporting is still undecided: this server can report success
   and cannot report that it broke.
+
+## 2026-08-28 - Transcript stitching fixed; the retrieval path is not what the plan claimed
+
+Ran ten-odd real queries through MCP to see what the tool actually returns.
+Two defects fell out, one small and one structural.
+
+### get_transcript_window repeated a sentence at every boundary
+
+Chunks overlap deliberately, measured at 6.68s / 7.96s / 7.60s between indices
+5-8 of one Zahabi AMA, and the tool joined their text with a space. Every
+multi-chunk window therefore duplicated a sentence:
+
+> "...progressively getting better and if it's not stop what you're doing.
+> progressively getting better and if it's not stop what you're doing."
+
+Same class as the others: well formed, plausible, wrong. A model quoting it
+doubles a sentence; a model weighing emphasis sees a point made twice.
+
+Fixed in `mcp/src/transcript.ts`. Detection is on text rather than timestamps,
+because mapping seconds to character offsets inside a chunk is a guess while the
+overlapping text is byte-identical -- both chunks render from the same segment
+list. Longest match first, `minOverlap` 16 characters so a coincidental "and I"
+cannot trigger a trim, and any boundary it fails to resolve is counted and
+disclosed in the response rather than passing silently.
+
+One bug of my own on the way: trimming leading whitespace off the remainder
+glued "...choke" to "and then more". The separator is already inside the
+remainder, because the matched span is a literal prefix of the next chunk.
+Caught by unit tests before it reached MCP.
+
+Four assertions added to `smoke-test.ts`, including that the known duplicated
+sentence now appears exactly once. **60 passed, 0 failed.**
+
+### search_transcripts is not calling the app's retrieval pipeline
+
+Checked because search quality looked poor on technique queries. Semantic
+retrieval **is** running -- `/api/rag/vector-search` returns real cosine
+similarities, 0.53-0.61 on the queries probed -- so the earlier absence of a
+degradation warning was accurate. The fault is elsewhere, in two layers.
+
+**First: the Phase 2 record was wrong.** It states that the HTTP choice means
+"both surfaces share exactly one retrieval path so they cannot diverge". That
+was never verified and is false. `/api/rag/search` is FTS only
+(`search_rag_transcript_chunks`); `/api/rag/vector-search` is vector only. The
+hybrid pipeline -- `buildCandidates`, `rerankCandidates`, `enrichCandidates` --
+lives in `ragPipeline.ts` and is reached only by `/api/rag/ask`, which always
+generates an answer and therefore cannot serve this tool. The credential
+argument for choosing HTTP still holds; the no-divergence argument does not.
+Corrected in PLAN.md rather than quietly dropped.
+
+**Second: the fusion is a zipper, not a blend.** `fuse()` is plain RRF at k=60
+over two single-mode lists. When both return 10 results with no overlap, rank
+*i* in either list scores identically, JavaScript's sort is stable, and the text
+list is passed first -- so text wins every tie. Measured across eight queries the
+top-8 source pattern is exactly `text,vec,text,vec,text,vec,text,vec` whenever
+both lists are full. The precision of the alternation is the proof: it is a
+tie-breaking artefact, not a ranking.
+
+This explains the symptom exactly. "heel hook defense" gives FTS ten
+confident-looking matches because the literal phrase is all over match
+commentary, and the zipper hands them slots 1, 3, 5 and 7 -- which is why
+"2026 Polaris 37" outranked the vector list's own top hit, an instructional
+video. "how do I stop gassing out during rolls" returns **2** FTS hits against
+10 vector hits, semantic dominates by default, and the answers are good. The
+tool is strongest where keyword search fails and weakest where keyword search
+returns plausible junk.
+
+Also absent, all of it in `ragPipeline.ts`: the `metadataResults` path that
+searches technique cards first and maps them back onto chunks, the rerank, and
+`capPerVideo` applied across modes rather than within each route.
+
+### MCP traffic is contaminating site analytics now, not later
+
+The unchecked Phase 2 logging item is worse than missing. Both routes call
+`logSearch` themselves, so every `search_transcripts` call already writes two
+rows tagged `action=keyword` and `action=semantic`, indistinguishable from a
+person on search.zencub.com. **119 rows in three hours**, every one a test query
+from this session. Verified by reading them back: "knee cut pass", "why do I keep
+getting my guard passed", "escaping bottom side control".
+
+### Verified
+
+`smoke-test.ts` 60 passed 0 failed; `search-test.ts` 20 passed 0 failed;
+`npm run typecheck` clean; `npx eslint mcp` clean.

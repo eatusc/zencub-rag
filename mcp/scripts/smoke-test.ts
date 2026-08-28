@@ -156,6 +156,22 @@ check("window reports its actual bounds", Boolean(window.actual_window));
 const tooWide = await call("get_transcript_window", { video_id: videoId, start_seconds: 0, end_seconds: 99_999 });
 check("over-wide window is refused", tooWide.isError === true, bodyOf(tooWide).slice(0, 60));
 
+// Chunks overlap by 6-8 seconds, so a plain join repeated a sentence at every
+// boundary. The window below spans four chunks of a Zahabi AMA and used to read
+// "...stop what you're doing. stop what you're doing. Good morning coach."
+const stitchWindow = parse(await call("get_transcript_window", {
+  video_id: "SC_MxMILch4", start_seconds: 400, end_seconds: 560,
+}));
+const stitchedText = String(stitchWindow.transcript ?? "");
+check("stitched window spans several chunks", Number(stitchWindow.chunk_count) >= 3, String(stitchWindow.chunk_count));
+check("no boundary went unmatched", !("note" in stitchWindow), String(stitchWindow.note ?? ""));
+check("overlap is not repeated in the transcript",
+  !/(.{40,}?)\1/.test(stitchedText.replace(/\s+/g, " ")),
+  (/(.{40,}?)\1/.exec(stitchedText.replace(/\s+/g, " ")) ?? [])[1]?.slice(0, 70) ?? "");
+check("known duplicated sentence appears exactly once",
+  stitchedText.split("I teach you how to decompress your back while you're").length - 1 === 1,
+  String(stitchedText.split("I teach you how to decompress your back while you're").length - 1));
+
 console.log("\n== list_techniques ==");
 const guardTechniques = parse(await call("list_techniques", { position: "guard", limit: 10 }));
 check("filtered techniques returned", Number(guardTechniques.row_count) > 0, String(guardTechniques.row_count));
