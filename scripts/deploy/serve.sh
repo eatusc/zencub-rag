@@ -78,7 +78,7 @@ case "$MODE" in
     fi
     ;;
   *)
-    echo "usage: $0 <public|instructors|demo>" >&2
+    echo "usage: $0 <public|instructors|demo|mcp>" >&2
     exit 64
     ;;
 esac

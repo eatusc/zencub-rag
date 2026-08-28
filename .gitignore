@@ -26,10 +26,12 @@ docs/evals/*.json
 .env.*
 !.env.example
 
-# Production build outputs for the two Cloudflare Tunnel deployments
+# Production build outputs for the deployed surfaces. .next-mcp is loopback
+# only and never tunnelled, but it is a build artifact like the rest.
 .next-public/
 .next-instructors/
 .next-demo/
+.next-mcp/
 
 # Demo PIN + cookie secret for the full deployment
 scripts/deploy/prod.env
