@@ -944,3 +944,134 @@ call. Every prior run was `--eval`, which takes the other branch.
 `test-alerting.sh` 25; `npm run typecheck` clean; `npx eslint mcp src tests`
 clean. Migrations 0002 and 0004 applied to TEST, each validated inside
 `BEGIN; ... ROLLBACK;` first.
+
+## 2026-08-28 - The keep direction measured; a dead mcp surface can now page
+
+### Confirmed the running build before anything else
+
+Three checks against the live server, since the previous session's MCP process
+predated the `content_kind` work:
+
+- `search_transcripts("heel hook defense")` reports `filter: "curated"`, drops 4
+  `event_coverage` chunks, and returns Leduc / Volkanovski+Craig Jones / Eddie
+  Cummings with `content_kind` on every hit. No "2026 Polaris 37".
+- The same query at `filter: "none"` puts "2026 Polaris 37" at #1, tagged
+  `event_coverage`, over commentary reading "your winner by Chapo due to a heel
+  hook".
+- `list_techniques(gi_nogi: "kimono")` refuses, naming `both (2524)`,
+  `gi (630)`, `no_gi (234)`.
+
+### The unchecked direction, measured rather than argued
+
+`--verify-excludes` only ever re-reads what pass 1 wants to drop, so a wrong
+KEEP was unmeasured by construction: **2,439 of the 2,464 kept videos rested on
+Qwen alone**. Added `--audit-keeps [--sample N] [--seed S] [--kinds a,b]`, which
+draws a reproducible sample (`ORDER BY md5(video_id || seed)`), asks Haiku, and
+**writes nothing**.
+
+Writing nothing is the design, not caution. On the gold set Haiku alone scores
+34/35 and **its own single error is a false exclude**, so overwriting a keep on
+its disagreement would manufacture exactly the error the two-pass design exists
+to prevent - unattended, across the whole kept corpus.
+
+**Uniform stratum, 150 of 2,439:** 4 disputed, 2.7%, 95% Wilson upper bound
+6.7%. Read all four: 1 clear false keep, 1 defensible, and **2 Haiku errors** -
+it called a narrated D'Arce ("I lock it, right? And I pull this over. Now, I
+start cranking") `no_content`, and called an argument about street fighting
+`off_topic` when its own prompt reserves that for content not about fighting at
+all.
+
+**The real false keeps have a deterministic signature.** Strip the
+`bjjfanatics.com` tagline, `[music]`/`[applause]` and `>>` from a whole
+transcript: 97 videos have under 25 characters left, **90 already `no_content`,
+exactly 6 kept**. All six read; their complete transcripts are "Let's go!", a
+music-note outro marker, "[Music] you", "[music] >> Learn from the best on
+bjjfanatics.com.", "Thanks for watching!" and "It is time." Every one is
+`no_content` by that class's own definition and retrievable today. They carry
+enormous titles holding full technique descriptions, which is what the prompt
+warns about and the model followed anyway.
+
+So the title-pattern estimate this was meant to check - the weakest claim of the
+previous session - **was roughly right**: it said 5 videos / 7 chunks, an
+independent deterministic rule says 6 videos / 6 chunks, **0.05% of the 11,459
+kept chunks**. The $6.85 full second pass is not justified.
+
+**The cause was the verification pass, not pass 1.** Five of the six carried
+Haiku as their labelling model, so they were among the **25 exclusions Haiku
+"rescued" from Qwen**. Qwen had them right; the second opinion overturned
+correct exclusions and put boilerplate back into the corpus. That is **5 of 25
+rescues, 20%**, against 6 of 2,464 kept videos, 0.24%, across the kept set. The
+two-pass still paid for itself - the other 20 rescues include real instruction -
+but the previous session measured only how often Qwen's exclusions were wrong,
+never how often a rescue was. That direction had no gold coverage and no
+measurement until now, and it is where the false keeps actually came from.
+
+**`interview` stratum, all 98 unverified:** 11 disputed, 11.2%, over the 5% bar
+set before the run - and the bar firing is the most useful thing the audit
+produced, because the conclusion it invites is wrong. Seven of eleven are
+`interview -> event_coverage`, 198 of the 203 disputed chunks, on the one
+boundary the gold set already records Haiku failing. The largest, `cj0kftppPvM`
+(84 chunks), **is in the gold set as a hand-labelled keep** whose note reads
+"Came back event_coverage, which would have deleted it." The second, `u5payaNB37E`
+(78 chunks), was read here: Zahabi in his own voice on striking mechanics, which
+the prompt's own test makes `interview` "EVEN IF he goes round by round". The
+remaining four are 1-2 chunk banter clips.
+
+The over-bar message was rewritten afterwards: it used to assert "the kept set
+needs the full second pass", which this run disproves. It now says to read the
+disputed rows and warns that a high rate in a stratum full of that boundary may
+be measuring the verifier rather than the corpus.
+
+### A dead mcp surface could not reach anybody
+
+Two defects, both found by reading the deploy log rather than reasoning about it:
+
+- **`deploy.sh` restarted 3421 and never verified it.** It kickstarts four
+  surfaces then checks 3418, 3420 and 3419. The last deploy's log lists public,
+  instructors and demo and stops. A build breaking only `APP_MODE=mcp` was a
+  successful deploy.
+- **`autodeploy.sh`'s steady-state check read 3418 alone.** launchd restarts a
+  crashing surface forever (`KeepAlive`, `ThrottleInterval 15`) and says
+  nothing, so 3421 could crash-loop while autodeploy wrote `ok` every 5 minutes.
+
+Both now cover every surface. A surface behind the expected sha triggers a
+redeploy; if it still will not come up, `deploy.sh`'s new per-surface check
+fails and the existing `mark_fail` pages on the 6-hour throttle. No new job -
+the alerting path that already works was given the input it was missing.
+
+**A third defect appeared while testing the fix**, and is the most instructive:
+the first version rendered an unreachable surface as an **empty string**, so the
+page would have read as though that surface simply went unmentioned. A silent
+failure inside the silent-failure alarm. Fields now default to the literal word
+`unreachable`, asserted.
+
+### Verified
+
+`npm test` 76; `smoke-test.ts` 60; `search-test.ts` 36; `test-alerting.sh`
+**25 -> 35**; `npm run typecheck` clean; `npx eslint mcp src tests` clean.
+`test-alerting.sh` now stubs `curl` on PATH, so it keeps its promise to touch no
+real server, and its `pages()` helper is fixed - `grep -c` prints `0` and exits
+non-zero on an empty file, so every count read as `0\n0`.
+
+### Fixed, both the rows and the cause
+
+- `mcp/migrations/0005-boilerplate-only-videos.sql`, **applied to TEST**.
+  Set-based and stated as the rule rather than as six ids, so it cannot hit a
+  row that does not meet it and running it twice is a no-op - verified,
+  `UPDATE 6` then `UPDATE 0`. It can only move a video INTO `no_content`, never
+  return one to the corpus. Validated inside `BEGIN; ... ROLLBACK;` first, which
+  confirmed the six and left them untouched. The six prior labels are recorded
+  in the file; that is what makes it reversible.
+- `classify-content-kind.ts` now decides this class **before any model call**.
+  Under 25 characters of residual speech across the whole transcript, after
+  stripping taglines, `[music]`/`[applause]` markers, `>>` and music notes, is
+  forced to `no_content` and stamped `+boilerplate-guard`, so a guarded decision
+  is never mistaken for a model's. Checked against all six real transcripts and
+  against the two borderline cases it must not catch, including the narrated
+  D'Arce that Haiku wrongly wanted to exclude.
+
+### Still open
+
+Nothing pages when a `search_transcripts` call fails for a reason other than the
+surface being down. The caller does see it (`search.ts:115-121` returns
+"retrieval unreachable"), so it is not silent to whoever asked.

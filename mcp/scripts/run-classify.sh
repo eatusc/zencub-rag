@@ -63,9 +63,23 @@ if [ -z "$DSN" ]; then
   exit 2
 fi
 
-# Which pass this is, so the pages describe what actually happened.
+# Which pass this is, so the pages describe what actually happened. An audit
+# writes nothing at all, so a page quoting a label count would report a working
+# run as having done nothing -- the same failure the verify page already had.
 MODE="classify"
-case " $* " in *" --verify-excludes "*) MODE="verify" ;; esac
+case " $* " in
+  *" --verify-excludes "*) MODE="verify" ;;
+  *" --audit-keeps "*) MODE="audit" ;;
+esac
+
+# What "still alive and getting somewhere" looks like for this pass.
+progress_line() {
+  case "$MODE" in
+    verify) echo "second opinions recorded: $(verified_count)" ;;
+    audit)  echo "rows audited so far: $(grep -c -E '^  (agreed|DISPUTED)' "$LOG" 2>/dev/null || echo 0) (this pass writes nothing)" ;;
+    *)      echo "classified so far: $(classified_count) of $(classifiable_count) classifiable" ;;
+  esac
+}
 
 CONTENT_KIND_MODEL="${CONTENT_KIND_MODEL:-anthropic/claude-haiku-4.5}" \
   node --experimental-strip-types mcp/scripts/classify-content-kind.ts "$@" >>"$LOG" 2>&1 &
@@ -80,9 +94,9 @@ RUN_PID=$!
     [ -f "$LOG" ] || continue
     age=$(( $(date +%s) - $(stat -f %m "$LOG") ))
     if [ "$age" -gt "$STALL_SECONDS" ]; then
-      page "zencub-rag content_kind classify STALLED
+      page "zencub-rag content_kind $MODE STALLED
 no output for ${age}s (pid $RUN_PID still alive).
-classified so far: $(classified_count) of $(classifiable_count) classifiable
+$(progress_line)
 log: $LOG"
       exit 0
     fi
@@ -94,7 +108,20 @@ wait "$RUN_PID"
 status=$?
 kill "$WATCHDOG_PID" 2>/dev/null
 
-if [ "$status" -eq 0 ] && [ "$MODE" = "verify" ]; then
+if [ "$status" -eq 0 ] && [ "$MODE" = "audit" ]; then
+  page "zencub-rag content_kind AUDIT DONE (nothing written)
+
+$(sed -n '/^audit of the KEEP direction/,/^  by the label/p' "$LOG" | head -8)
+
+$(grep -c '^  DISPUTED' "$LOG" 2>/dev/null || echo 0) disputed rows to read by hand.
+log: $LOG"
+elif [ "$status" -ne 0 ] && [ "$MODE" = "audit" ]; then
+  page "zencub-rag content_kind AUDIT FAILED (exit $status)
+Nothing was written either way; a re-run with the same --seed draws the same
+sample, so no progress is lost.
+
+$(tail -n 12 "$LOG")"
+elif [ "$status" -eq 0 ] && [ "$MODE" = "verify" ]; then
   page "zencub-rag content_kind VERIFY DONE
 second opinions recorded: $(verified_count)
 still excluded after verification: $(excluded_count) of $(classifiable_count)
@@ -115,5 +142,5 @@ content_kind IS NULL.
 $(tail -n 12 "$LOG")"
 fi
 
-echo "classify finished with status $status; classified $(classified_count)"
+echo "$MODE finished with status $status; $(progress_line)"
 exit "$status"

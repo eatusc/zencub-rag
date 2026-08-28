@@ -26,6 +26,17 @@
 //                 excluded kind, using CONTENT_KIND_MODEL, and overwrite the
 //                 label when this model disagrees. Run with a different (and
 //                 stronger) model than the pass that produced them.
+//   --audit-keeps [--sample N] [--seed S] [--kinds a,b]
+//                 measure the OTHER direction. --verify-excludes only ever
+//                 re-reads what pass 1 wanted to drop, so a wrong KEEP is
+//                 unchecked by construction. This takes a reproducible random
+//                 sample of the kept-and-never-verified videos, asks the
+//                 second model, and reports the false-keep rate with a 95%
+//                 upper bound. WRITES NOTHING, deliberately: see the comment
+//                 on the audit branch. --kinds restricts the sample to one or
+//                 more kept labels, so a small risky class can be measured
+//                 densely instead of being represented by the handful of rows
+//                 a uniform draw would give it.
 //
 // Writes go through LANGGRAPH_DATABASE_URL, the owner connection, because the
 // MCP reader role has SELECT and nothing else and must keep it that way. This
@@ -112,6 +123,21 @@ const SMALLEST = has("--smallest");
 // agree on the gate 59/60, and the single disagreement was a Qwen false
 // exclude, which is exactly what this pass exists to catch.
 const VERIFY = has("--verify-excludes");
+// The audit of the opposite direction. --verify-excludes is asymmetric by
+// design and the asymmetry was never measured: 2,439 of the 2,464 kept videos
+// rest on pass 1 alone. This samples them.
+const AUDIT = has("--audit-keeps");
+const SAMPLE = valueOf("--sample") ? Number(valueOf("--sample")) : 200;
+// Sampling is seeded so the same sample can be drawn again and the same rows
+// re-read by hand. An unreproducible sample cannot be checked by anyone,
+// including whoever ran it.
+const SEED = valueOf("--seed") ?? "audit-2026-08-28";
+// Restrict the audit to particular kept labels. A uniform draw of 200 over a
+// population that is 86% `instruction` gives `interview` about nine rows, and
+// interview/event_coverage is the boundary the prompt itself calls the one that
+// goes wrong most often. Nine rows cannot say anything about it, so that class
+// gets its own pass rather than a token presence in the headline one.
+const AUDIT_KINDS = (valueOf("--kinds") ?? "").split(",").map((k) => k.trim()).filter(Boolean);
 
 // ── the prompt ──────────────────────────────────────────────────────────────
 
@@ -173,6 +199,35 @@ function sample(chunks: string[], budget = 6_000): string {
   let out = picked.join("\n---\n");
   if (out.length > budget) out = out.slice(0, budget);
   return out;
+}
+
+// ── the boilerplate guard ───────────────────────────────────────────────────
+
+// Some transcripts are nothing but a channel tagline and a music marker. They
+// are `no_content` by that class's own definition, and asking a model is not
+// only unnecessary but actively unreliable: measured 2026-08-28, six of them
+// were classified `instruction`, `training_advice` and `promotional` -- all
+// KEPT, all retrievable -- because their titles carry a full technique
+// description over a two-word transcript ("Use the lasso guard to bait your
+// opponent into an omoplata attack..." over the transcript "Let's go!"). The
+// prompt warns about exactly this and the model followed the title anyway.
+//
+// So this one is decided deterministically rather than asked. It is the only
+// place in this script that overrides the model, and it can only ever move a
+// video INTO no_content, never out of an excluded class into a kept one.
+const BOILERPLATE = /Learn from the best on bjjfanatics\.com\.?|\[music\]|\[applause\]|>>|\u266a|\u266b|\ud83c\udfb6/gi;
+
+// Below this many characters of residual speech across the WHOLE transcript,
+// there is nothing to teach and nothing to judge. Measured over the corpus:
+// 97 videos qualify, 90 of which the model already called no_content, so the
+// threshold is not doing the classifier's job for it -- it is catching the
+// handful the titles fooled it on.
+const BOILERPLATE_MIN_CHARS = 25;
+
+const GUARD_LABEL_SUFFIX = "+boilerplate-guard";
+
+function residualSpeech(chunks: string[]): string {
+  return chunks.join(" ").replace(BOILERPLATE, "").replace(/\s+/g, " ").trim();
 }
 
 // ── the model call ──────────────────────────────────────────────────────────
@@ -323,8 +378,19 @@ if (!hasColumn) {
 }
 
 const goldIds = GOLD.map((item) => item.video_id);
+const ALL_KEPT_KINDS = KINDS.filter((kind) => !EXCLUDED_KINDS.has(kind));
+for (const kind of AUDIT_KINDS) {
+  // An unknown or excluded value here would silently sample nothing and report
+  // a clean 0% over zero rows, which is the well-formed-wrong-answer failure
+  // this whole codebase keeps running into. Refuse instead.
+  if (!(ALL_KEPT_KINDS as string[]).includes(kind)) {
+    throw new Error(`--kinds '${kind}' is not a kept content_kind. Valid: ${ALL_KEPT_KINDS.join(", ")}`);
+  }
+}
+const KEPT_KINDS = AUDIT_KINDS.length > 0 ? (AUDIT_KINDS as ContentKind[]) : ALL_KEPT_KINDS;
 const { rows } = await client.query<{
   video_id: string; title: string; channel_name: string | null; chunks: string[];
+  content_kind?: string | null; chunk_count?: string | null;
 }>(
   EVAL
     ? `SELECT v.video_id, v.title, v.channel_name,
@@ -333,6 +399,21 @@ const { rows } = await client.query<{
          LEFT JOIN public.rag_transcript_chunks c ON c.video_id = v.video_id
         WHERE v.video_id = ANY($1)
         GROUP BY v.video_id, v.title, v.channel_name`
+    : AUDIT
+    // Reproducible pseudo-random order. md5(id || seed) is uniform over the
+    // population and identical on every re-run of the same seed, so the sample
+    // can be redrawn and its rows read by hand afterwards. Ordering by
+    // random() would make the measurement uncheckable.
+    ? `SELECT v.video_id, v.title, v.channel_name, v.content_kind,
+              count(c.*)::text AS chunk_count,
+              COALESCE(array_agg(c.text ORDER BY c.chunk_index) FILTER (WHERE c.text IS NOT NULL), '{}') AS chunks
+         FROM public.rag_videos v
+         JOIN public.rag_transcript_chunks c ON c.video_id = v.video_id
+        WHERE v.content_kind = ANY($1::text[])
+          AND v.content_kind_verified_model IS NULL
+        GROUP BY v.video_id, v.title, v.channel_name, v.content_kind
+        ORDER BY md5(v.video_id || $2::text)
+        LIMIT ${Number(SAMPLE)}`
     : VERIFY
     ? `SELECT v.video_id, v.title, v.channel_name,
               COALESCE(array_agg(c.text ORDER BY c.chunk_index) FILTER (WHERE c.text IS NOT NULL), '{}') AS chunks
@@ -355,10 +436,10 @@ const { rows } = await client.query<{
   // so it failed before issuing a single model call. Found 2026-08-28 on the
   // first real dry run: every prior run of this script was --eval, which takes
   // the other branch, so the classification path had never executed at all.
-  EVAL ? [goldIds] : VERIFY ? [[...EXCLUDED_KINDS]] : [RECLASSIFY],
+  EVAL ? [goldIds] : AUDIT ? [KEPT_KINDS, SEED] : VERIFY ? [[...EXCLUDED_KINDS]] : [RECLASSIFY],
 );
 
-console.log(`${EVAL ? "EVAL" : VERIFY ? "VERIFY EXCLUSIONS" : DRY_RUN ? "DRY RUN" : "CLASSIFY"}: ${rows.length} videos, model=${MODEL}`);
+console.log(`${EVAL ? "EVAL" : AUDIT ? `AUDIT KEEPS (seed ${SEED})` : VERIFY ? "VERIFY EXCLUSIONS" : DRY_RUN ? "DRY RUN" : "CLASSIFY"}: ${rows.length} videos, model=${MODEL}`);
 
 const expectedByid = new Map(GOLD.map((item) => [item.video_id, item]));
 let done = 0;
@@ -369,9 +450,38 @@ const failures: string[] = [];
 const rescued: string[] = [];
 const mistakes: string[] = [];
 const tally = new Map<string, number>();
+// Audit bookkeeping. Kept per row rather than as running totals so the disputed
+// videos can be printed with enough to go and read them.
+interface Disputed {
+  video_id: string; title: string; channel: string;
+  was: string; now: ContentKind; confidence: number; why: string; chunks: number;
+}
+const disputed: Disputed[] = [];
+const auditByKind = new Map<string, { n: number; disputed: number }>();
+let auditChunks = 0;
+let disputedChunks = 0;
+
+let guarded = 0;
 
 for (const row of rows) {
   let verdict: Verdict;
+  // Whether THIS row was decided by the guard, so the stored model name says so
+  // and the decision is auditable later rather than looking like a model call.
+  let guardedRow = false;
+  const residual = residualSpeech(row.chunks ?? []);
+  if (residual.length < BOILERPLATE_MIN_CHARS) {
+    guardedRow = true;
+    guarded += 1;
+    verdict = {
+      kind: "no_content",
+      confidence: 1,
+      why: `boilerplate guard: ${residual.length} characters of speech remain after stripping taglines and markers (${JSON.stringify(residual.slice(0, 60))})`,
+    };
+    tally.set(verdict.kind, (tally.get(verdict.kind) ?? 0) + 1);
+    verdicts.set(row.video_id, verdict);
+    console.log(`  GUARD no_content      ${row.video_id}  ${String(row.title).slice(0, 44)}`);
+    console.log(`          ${verdict.why.slice(0, 150)}`);
+  } else {
   try {
     verdict = await classify(row.title ?? "", row.channel_name ?? "", sample(row.chunks ?? []));
   } catch (error) {
@@ -389,6 +499,11 @@ for (const row of rows) {
 
   tally.set(verdict.kind, (tally.get(verdict.kind) ?? 0) + 1);
   verdicts.set(row.video_id, verdict);
+  }
+
+  // Named per row rather than reusing MODEL, so a guarded decision is never
+  // mistaken for something the model said.
+  const modelLabel = guardedRow ? `${MODEL}${GUARD_LABEL_SUFFIX}` : MODEL;
 
   if (EVAL) {
     const gold = expectedByid.get(row.video_id);
@@ -398,6 +513,37 @@ for (const row of rows) {
       mistakes.push(`${row.video_id} "${String(row.title).slice(0, 46)}" expected=${gold.expected} got=${verdict.kind}\n        gold: ${gold.because}\n        model: ${verdict.why}`);
     }
     console.log(`  ${ok ? "OK  " : "MISS"}  ${verdict.kind.padEnd(15)} ${String(row.title).slice(0, 52)}`);
+  } else if (AUDIT) {
+    // WRITES NOTHING, and that is the point rather than caution. The second
+    // model is not a ground truth: on the 35-video gold set Haiku alone scores
+    // 34/35 and its own single error is a FALSE EXCLUDE. Overwriting a keep
+    // because Haiku disagrees would therefore manufacture exactly the error
+    // the two-pass design exists to prevent, and would do it unattended across
+    // the whole kept corpus. A disagreement here is a candidate to go and read,
+    // not a verdict. So this measures a rate and hands back a list.
+    const was = String(row.content_kind ?? "");
+    const chunks = Number(row.chunk_count ?? 0);
+    const seen = auditByKind.get(was) ?? { n: 0, disputed: 0 };
+    seen.n += 1;
+    auditChunks += chunks;
+    const nowExcluded = EXCLUDED_KINDS.has(verdict.kind);
+    if (nowExcluded) {
+      seen.disputed += 1;
+      disputedChunks += chunks;
+      disputed.push({
+        video_id: row.video_id,
+        title: String(row.title ?? ""),
+        channel: String(row.channel_name ?? ""),
+        was,
+        now: verdict.kind,
+        confidence: verdict.confidence,
+        why: verdict.why,
+        chunks,
+      });
+    }
+    auditByKind.set(was, seen);
+    console.log(`  ${nowExcluded ? "DISPUTED" : "agreed  "} ${was.padEnd(15)} -> ${verdict.kind.padEnd(15)} ${chunks}ch  ${row.video_id}  ${String(row.title).slice(0, 44)}`);
+    if (nowExcluded) console.log(`           ${verdict.why.slice(0, 170)}`);
   } else if (DRY_RUN) {
     // A dry run that prints only a distribution cannot be audited, and the
     // whole point of one here is to check the exclusions on videos the gold set
@@ -418,14 +564,14 @@ for (const row of rows) {
                 content_kind_model = $4, content_kind_at = now(),
                 content_kind_verified_model = $4, content_kind_verified_at = now()
           WHERE video_id = $1`,
-        [row.video_id, verdict.kind, verdict.confidence, MODEL],
+        [row.video_id, verdict.kind, verdict.confidence, modelLabel],
       );
     } else {
       await client.query(
         `UPDATE public.rag_videos
             SET content_kind_verified_model = $2, content_kind_verified_at = now()
           WHERE video_id = $1`,
-        [row.video_id, MODEL],
+        [row.video_id, modelLabel],
       );
     }
     console.log(`  ${overturned ? "RESCUED" : "agreed  "} ${verdict.kind.padEnd(15)} ${String(row.title).slice(0, 46)}`);
@@ -437,7 +583,7 @@ for (const row of rows) {
           SET content_kind = $2, content_kind_confidence = $3,
               content_kind_model = $4, content_kind_at = now()
         WHERE video_id = $1`,
-      [row.video_id, verdict.kind, verdict.confidence, MODEL],
+      [row.video_id, verdict.kind, verdict.confidence, modelLabel],
     );
   }
 
@@ -445,11 +591,95 @@ for (const row of rows) {
   if (!EVAL && done % 25 === 0) console.log(`  ... ${done}/${rows.length}`);
 }
 
+// Read before the connection closes: the sample only means something next to
+// the population it was drawn from.
+let population = 0;
+let populationChunks = 0;
+if (AUDIT) {
+  const { rows: popRows } = await client.query<{ videos: string; chunks: string }>(
+    `SELECT count(DISTINCT v.video_id)::text AS videos, count(c.*)::text AS chunks
+       FROM public.rag_videos v
+       JOIN public.rag_transcript_chunks c ON c.video_id = v.video_id
+      WHERE v.content_kind = ANY($1::text[])
+        AND v.content_kind_verified_model IS NULL`,
+    [KEPT_KINDS],
+  );
+  population = Number(popRows[0]?.videos ?? 0);
+  populationChunks = Number(popRows[0]?.chunks ?? 0);
+}
+
 await client.end();
+
+// Wilson score interval, upper bound. Reported instead of the point estimate
+// alone because at these rates the point estimate is the uninformative half:
+// 0 disputed out of 200 is not "0%", it is "below about 1.9%", and that bound
+// is the actual finding.
+function wilsonUpper(k: number, n: number, z = 1.96): number {
+  if (n === 0) return 1;
+  const p = k / n;
+  const denominator = 1 + (z * z) / n;
+  const centre = (p + (z * z) / (2 * n)) / denominator;
+  const margin = (z / denominator) * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
+  return Math.min(1, centre + margin);
+}
+
+// Pre-registered before the run, per the rule that a criterion written
+// afterwards grades nothing. The title-pattern check this replaces put the
+// false-keep population at 5 videos / 7 chunks, roughly 0.2%. A sampled rate
+// materially above that is a signal to go and read the disputed rows. The bar
+// is deliberately loose because a false keep costs precision only.
+//
+// It is a flag, NOT a verdict, and the first run proved why. On the `interview`
+// stratum it fired at 11.2%, and the largest disputed video was cj0kftppPvM --
+// a Zahabi pre-fight breakdown that is in the gold set as a hand-labelled KEEP,
+// with the note "Came back event_coverage, which would have deleted it."
+// Haiku's own documented error direction is a false EXCLUDE on exactly the
+// interview/event_coverage boundary, so pointing it at kept videos inflates
+// this rate with its own bias. A high rate here means "read these", never
+// "reclassify these".
+const AUDIT_BAR = 0.05;
+let auditRateOverBar = false;
+
+if (AUDIT) {
+  const n = Array.from(auditByKind.values()).reduce((sum, item) => sum + item.n, 0);
+  const k = disputed.length;
+  const rate = n > 0 ? k / n : 0;
+  const upper = wilsonUpper(k, n);
+  auditRateOverBar = rate > AUDIT_BAR;
+
+  console.log(`\naudit of the KEEP direction, ${MODEL} over a seeded random sample`);
+  console.log(`  population: ${population} kept videos never given a second opinion (${populationChunks} chunks)`);
+  console.log(`  sampled:    ${n} videos (${auditChunks} chunks)`);
+  console.log(`  disputed:   ${k} -- this model would exclude them (${disputedChunks} chunks)`);
+  console.log(`  false-keep rate: ${(100 * rate).toFixed(1)}%, 95% upper bound ${(100 * upper).toFixed(1)}%`);
+  console.log(`  implies at most ~${Math.round(upper * population)} misfiled videos in the kept set`);
+
+  console.log("\n  by the label pass 1 gave them:");
+  for (const kind of ALL_KEPT_KINDS) {
+    const seen = auditByKind.get(kind);
+    if (!seen) continue;
+    console.log(`    ${kind.padEnd(16)} ${String(seen.disputed).padStart(3)} disputed of ${String(seen.n).padStart(3)} sampled`);
+  }
+
+  if (disputed.length > 0) {
+    // Sorted by chunk count: a disputed 200-chunk livestream pollutes retrieval
+    // far more than a disputed 1-chunk clip, and the count alone hides that.
+    console.log("\n  disputed videos, largest first. READ THESE; the second model is not ground truth.");
+    for (const item of [...disputed].sort((a, b) => b.chunks - a.chunks)) {
+      console.log(`    ${item.video_id}  ${item.chunks}ch  ${item.was} -> ${item.now} (${item.confidence.toFixed(2)})`);
+      console.log(`      "${item.title.slice(0, 90)}" -- ${item.channel}`);
+      console.log(`      ${item.why.slice(0, 180)}`);
+    }
+  }
+}
 
 if (VERIFY) {
   console.log(`\nverified ${done} exclusions; ${rescued.length} overturned and returned to the corpus:`);
   for (const item of rescued) console.log(`  - ${item}`);
+}
+
+if (guarded > 0) {
+  console.log(`\n${guarded} video(s) decided by the boilerplate guard rather than the model: nothing but taglines and markers in the transcript.`);
 }
 
 console.log("\ndistribution:");
@@ -520,10 +750,14 @@ const scored = EVAL && rows.length > 0;
 const belowBar = scored && correct / rows.length < GOLD_BAR;
 const destructive = scored && gateFalseExcludes > MAX_FALSE_EXCLUDES;
 
+if (auditRateOverBar) {
+  console.log(`\nOVER BAR: sampled false-keep rate is above the ${100 * AUDIT_BAR}% set before the run. Read every disputed row above before concluding anything. This model's own errors run toward false EXCLUDES on the interview/event_coverage boundary, so a high rate in a stratum full of that boundary may be measuring the verifier rather than the corpus. Nothing was written.`);
+}
+
 if (belowBar) {
   console.log(`\nFAIL: gold accuracy ${(100 * correct / rows.length).toFixed(0)}% is below the ${100 * GOLD_BAR}% bar.`);
 }
 if (destructive) {
   console.log(`\nFAIL: ${gateFalseExcludes} false exclude(s), bar is ${MAX_FALSE_EXCLUDES}. Each one deletes a video a practitioner should have been able to find. Do not classify the corpus on this prompt.`);
 }
-process.exit(failures.length > 0 || belowBar || destructive ? 1 : 0);
+process.exit(failures.length > 0 || belowBar || destructive || auditRateOverBar ? 1 : 0);

@@ -389,10 +389,45 @@ What is missing compared with the real pipeline, all of it in `ragPipeline.ts`:
 - [ ] Tests: reader role cannot reach `public`; `query_sql` rejects non-SELECT,
       multi-statement, and CTE-wrapped writes; row cap and timeout hold
 - [ ] Test: schema description counts match live counts (they will drift)
-- [ ] **Failure reporting.** Per the standing rule, nothing runs in the
-      background without being able to say it broke. Decide the path: health
-      tool plus Telegram on repeated tool errors, or fold into the jobs audit.
-      A server that only ever reports success is indistinguishable from a dead one.
+- [x] **Failure reporting: a dead mcp surface now pages.** Done 2026-08-28,
+      and the gap was wider than the plan described. Two defects, both found by
+      reading the deploy log rather than by reasoning:
+
+      1. **`deploy.sh` restarted the mcp surface and never verified it.** It
+         kickstarts all four and then checks 3418, 3420 and 3419 only, so a
+         build that broke `APP_MODE=mcp`, or a 3421 that came back on the
+         previous bundle or not at all, was reported as a successful deploy.
+         Visible in the log of the last deploy, which lists public, instructors
+         and demo and stops.
+      2. **`autodeploy.sh`'s steady-state check read 3418 alone.** Between
+         deploys, launchd restarts a crashing surface forever (`KeepAlive`,
+         `ThrottleInterval 15`) and says nothing, so 3421 could crash-loop
+         indefinitely while autodeploy wrote `ok` every five minutes because
+         the public site was fine.
+
+      Fixed by extending both to every surface: `surfaces_behind()` names any
+      surface not on the expected sha, which triggers a redeploy, and if it
+      still will not come up `deploy.sh`'s new per-surface check fails and the
+      existing `mark_fail` pages with the 6-hour throttle. A surface that dies
+      once and restarts cleanly self-heals and is not paged, which is correct.
+      No new job: the alerting path that already works got the missing input.
+
+      A third defect surfaced while testing the fix. The first version rendered
+      an unreachable surface as an **empty string**, so the page would have read
+      as though that surface had simply not been mentioned - a silent failure
+      inside the silent-failure alarm. Every field is now defaulted to the
+      literal word `unreachable`, and an assertion holds it.
+
+      `test-alerting.sh` is 25 -> 35 assertions. It also stubs `curl` on PATH
+      now, so the surface probes are deterministic and the file keeps its
+      promise to touch no real server; and its `pages()` helper is fixed, having
+      counted an empty file as `0\n0` because `grep -c` prints zero and exits
+      non-zero at the same time.
+
+      Still open, and smaller: nothing pages when a `search_transcripts` call
+      fails for a reason other than the surface being down. The caller does see
+      it (`search.ts:115-121` returns "retrieval unreachable"), so it is not
+      silent to whoever asked.
 
 ## Phase 4 - optional
 
@@ -622,7 +657,89 @@ gassing out" scores 0 literal chunk hits and 123 concept-word hits.
          under `event_coverage`, and a round-by-round recap of one fight is
          literally both. Sharpen that distinction, re-run `--eval`, and only
          then classify the corpus.
-      5. **Only then** consider the site, behind a fresh measurement.
+      4b. [x] **Audit the KEEP direction, which the two-pass design leaves
+         unchecked.** Done 2026-08-28. `--verify-excludes` only ever re-reads
+         what pass 1 wants to drop, so a wrong keep was unmeasured by
+         construction: 2,439 of the 2,464 kept videos rested on Qwen alone.
+         `--audit-keeps` samples them reproducibly (seeded `md5(id || seed)`),
+         asks Haiku, and **writes nothing** -- see below for why that is the
+         design and not caution.
+
+         **Uniform stratum, n = 150 of 2,439.** 4 disputed, 2.7%, 95% Wilson
+         upper bound 6.7%. On reading all four, **1 is a clear false keep and 1
+         is defensible**; the other two are Haiku errors (it called a narrated
+         D'Arce `no_content`, and called an argument about street fighting
+         `off_topic` when its own prompt defines that as not about fighting at
+         all). Disputed chunk mass is 5 of 643 sampled, 0.8%.
+
+         **The genuine false keeps have a deterministic signature, so no model
+         is needed to find the rest.** Strip the `bjjfanatics.com` tagline,
+         `[music]`/`[applause]` markers and `>>` from a whole transcript and ask
+         what is left: 97 videos in the corpus have under 25 characters
+         remaining. **90 are already `no_content`. Exactly 6 are kept**, and all
+         six were read: their complete transcripts are "Let's go!",
+         "(music note) Music Outro (music note)", "[Music] you", "[music] >> Learn from the best on
+         bjjfanatics.com.", "Thanks for watching!" and "It is time.". Every one
+         is `no_content` by that class's own definition and every one is
+         retrievable today. What fooled the classifier is visible in the rows:
+         these carry enormous titles containing full technique descriptions
+         ("Use the lasso guard to bait your opponent into an omoplata attack...").
+         The prompt warns about exactly this and the model still followed the
+         title.
+
+         **So the title-pattern estimate this was meant to check was roughly
+         right after all**: it said 5 videos / 7 chunks, an independent
+         deterministic rule says 6 videos / 6 chunks, which is **0.05% of the
+         11,459 kept chunks**. The $6.85 full second pass is not justified.
+
+         **Fixed, both the rows and the cause.**
+         `mcp/migrations/0005-boilerplate-only-videos.sql` corrects the six,
+         stated as the rule rather than as six ids so it cannot hit anything
+         else and re-running is a no-op (verified: `UPDATE 6` then `UPDATE 0`).
+         It can only move a video INTO `no_content`, never return one to the
+         corpus. Validated inside `BEGIN; ... ROLLBACK;` first. The prior labels
+         are recorded in the file, which is what makes it reversible. And
+         `classify-content-kind.ts` now decides this class **before any model
+         call**: a transcript with under 25 characters left after stripping
+         taglines and markers is forced to `no_content`, stamped
+         `+boilerplate-guard` so a guarded decision is never mistaken for
+         something a model said. Checked against all six real transcripts, and
+         against the two borderline cases it must NOT catch.
+
+         **And the cause was the verification pass, not pass 1.** Five of the
+         six carried Haiku as their labelling model, meaning they were among the
+         **25 exclusions Haiku "rescued" from Qwen**. Qwen had them right;
+         the second opinion overturned correct exclusions and put boilerplate
+         back into the corpus. **5 of 25 rescues, 20%**, against 6 of 2,464 kept
+         videos, 0.24%, in the kept set at large. The two-pass still paid for
+         itself -- the other 20 rescues include real instruction -- but the
+         previous session recorded only the rate at which Qwen's exclusions were
+         wrong and never the rate at which the rescues were. That direction had
+         no gold coverage and no measurement until now, and it is where the
+         false keeps actually came from.
+
+         **`interview` stratum, all 98 unverified.** 11 disputed, 11.2%, over
+         the 5% bar set before the run -- and the bar firing here is the most
+         useful thing the audit produced, because **the conclusion it invites is
+         wrong**. Seven of the eleven are `interview -> event_coverage`, 198 of
+         the 203 disputed chunks, and that is the one boundary the gold set
+         already records Haiku getting wrong. The largest, `cj0kftppPvM` at 84
+         chunks, **is in the gold set as a hand-labelled keep**, its note
+         reading "Came back event_coverage, which would have deleted it." The
+         second largest, `u5payaNB37E` at 78 chunks, was read here: it is Zahabi
+         in his own voice on striking mechanics ("the jab and the hook were so
+         married together"), which the prompt's own test makes `interview`
+         "EVEN IF he goes round by round". The remaining four are 1-2 chunk
+         banter clips, 5 chunks total, and are plausible genuine false keeps.
+
+         **The asymmetry is therefore not a gap to close by symmetry.** Haiku's
+         own error direction is the false exclude, so pointing it at kept videos
+         measures the verifier as much as the corpus. That is why `--audit-keeps`
+         writes nothing: auto-excluding on a Haiku disagreement would have
+         deleted the Zahabi AMAs unattended, manufacturing precisely the error
+         the two-pass design exists to prevent.
+
+    5. **Only then** consider the site, behind a fresh measurement.
       6. If the site does get the gate: `CREATE INDEX CONCURRENTLY` the partial
          HNSW and FTS indexes alongside the existing full ones first, so there is
          never a window without an index; edit the two RPCs last, since that one
