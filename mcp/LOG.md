@@ -723,3 +723,93 @@ paths only. Recorded in PLAN.md, not fixed.
 `search-test.ts` 27 passed 0 failed (20 prior + 7 new); `npm run typecheck`
 clean; `npx eslint` clean on both `mcp` and the touched app files. Migration
 0003 applied; 0002 still drafted and unapplied.
+
+## 2026-08-28 - Autodeploy could not report failure; merged to main and deployed
+
+Session opened by confirming the build was the new one, since the previous
+session's server predated the fixes. All three checks pass against the running
+server: `list_techniques(gi_nogi: "nogi")` canonicalises to `no_gi` and returns
+200 rows capped out of 234; `gi_nogi: "kimono"` is refused naming
+`both (2524), gi (630), no_gi (234)`; `search_transcripts` reports
+`retrieval_mode: "hybrid"`, `reranked: true`.
+
+### The alerting path named in the plan did not exist
+
+`autodeploy.sh` had been failing every 5 minutes since 14:48 (checkout on
+`mcp-server`, `deploy.sh` refuses any branch but main) and reached nobody.
+Correctly, it failed safe: the branch guard runs before anything is touched, and
+`/api/health` on 3418 confirmed the servers were already on `a4dcfc3` which was
+`origin/main`, so nothing was actually pending. The failure was the silence, not
+the deploy.
+
+**The first fix proposed was wrong, and Eric caught it.** The plan was to reuse
+`amzdash/scripts/notify-telegram.sh`, which sources `~/.hermes/.env`. Every
+`TELEGRAM_*` line in that file is **commented out**; sourcing it yields
+`TELEGRAM_BOT_TOKEN=[UNSET]` and `TELEGRAM_HOME_CHANNEL=[UNSET]`, so the script
+hits its own guard and sends nothing. The check that "verified" the credentials
+was `grep -c TELEGRAM_BOT_TOKEN`, which returned 4 by counting commented lines.
+A cheap check producing a confident wrong reading, which is the same failure
+class this project keeps finding in the tools themselves.
+
+**Consequence outside this repo, recorded not fixed:**
+`amzdash/scripts/daily-pull.sh:117,140` still calls that notifier, including for
+"pipeline failed twice". That alerting path is dead today.
+
+The live outbound path is `~/code/cladia/.env` with `CLADIA_BOT_TOKEN` and
+`CLADIA_ALLOWED_USERS`, both uncommented, which is what
+`sys_docs/scripts/jobs_audit.py:304` sends through and what the standing rule
+means by Cladia's bot.
+
+### Built
+
+- `scripts/deploy/notify.sh` - curl-only page. No node, no python, no model, no
+  dependency on the app or database, so the alerting path shares no failure mode
+  with the build it reports on. Reads the two keys with `sed` rather than
+  sourcing, because sourcing an unknown file executes it and `~/.hermes/.env`
+  already errors on a stray Chrome path. Never echoes the token, including on
+  error paths: this repo is public.
+- `scripts/deploy/autodeploy.sh` - pages on failure and on recovery, carrying
+  the last 12 lines of the deploy's own output so the page says why. Throttled
+  to one page per failure then at most every 6 hours, with the last-paged clock
+  deliberately *not* reset by repeat failures. A page that fails to send is not
+  recorded as sent, so the next run retries rather than falling into the quiet
+  window on an alert nobody saw. Exiting 0 on a failed deploy is guarded.
+- `scripts/deploy/test-alerting.sh` - 15 assertions over the state machine in a
+  throwaway git repo with `deploy.sh` and `notify.sh` stubbed. Sends nothing.
+
+**Proven, not assumed:** one live test page sent, HTTP 200, and Eric confirmed
+receiving it.
+
+### Merged to main and deployed, on Eric's call
+
+Merged `mcp-server` into `main` as a fast-forward (5 commits, `a4dcfc3` ->
+`8e2644b`) and pushed. Scanned the outgoing diff for key-shaped strings and
+project refs first, since the repo is public: every hit was a placeholder
+(`YOUR_PROJECT_REF`, `replace_me`, `REPLACE_WITH_GENERATED_PASSWORD`) or an env
+var name in prose.
+
+Deploy driven by kickstarting the launchd job rather than running `deploy.sh` by
+hand, so the new `autodeploy.sh` was exercised in situ. `deploy ok, now on
+8e2644b`.
+
+### Verified live after the deploy, rather than from the deploy log
+
+- public 3418, instructors 3420, mcp 3421 all `health=200` on `8e2644b`; demo
+  3419 returns 401, which is the PIN gate and correct.
+- **The route gating holds after a real deploy**, which is the constraint that
+  mattered: `POST /api/rag/retrieve` returns **404 on 3418 and 3420**, 200 on
+  3421 only.
+- `autodeploy.state` reads `ok`, so the next failure pages immediately.
+- The `.next-mcp` stamp caveat from last session is resolved: 3421 now reports
+  `8e2644b` rather than trailing at `f816574`.
+
+### Gates
+
+`npm test` 76 passed; `smoke-test.ts` 60 passed 0 failed; `search-test.ts` 27
+passed 0 failed, re-run after the restart; `test-alerting.sh` 15 passed 0
+failed; `npm run typecheck` clean; `npx eslint mcp src tests` clean.
+
+### Still open
+
+Phase 3 failure reporting is now solved for *autodeploy*, not for the MCP server
+itself. That server still reports success and cannot say it broke.
