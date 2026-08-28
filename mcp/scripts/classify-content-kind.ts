@@ -21,6 +21,11 @@
 //   --smallest    sample the shortest videos rather than the longest, so an
 //                 audit covers the 1-chunk clips and not only livestreams.
 //   --reclassify  include videos that already have a content_kind.
+//   --verify-excludes
+//                 second pass: re-check only videos already labelled with an
+//                 excluded kind, using CONTENT_KIND_MODEL, and overwrite the
+//                 label when this model disagrees. Run with a different (and
+//                 stronger) model than the pass that produced them.
 //
 // Writes go through LANGGRAPH_DATABASE_URL, the owner connection, because the
 // MCP reader role has SELECT and nothing else and must keep it that way. This
@@ -37,12 +42,13 @@ const KINDS: ContentKind[] = [
   "interview",
   "promotional",
   "no_content",
+  "off_topic",
 ];
 
 // The two values retrieval gates on. Everything else stays searchable, which is
 // why the plan keeps the Zahabi back-pain AMAs and the Chewjitsu training talk:
 // they are not instruction, and a practitioner still wants them.
-const EXCLUDED_KINDS = new Set<ContentKind>(["event_coverage", "no_content"]);
+const EXCLUDED_KINDS = new Set<ContentKind>(["event_coverage", "no_content", "off_topic"]);
 
 // ── env ─────────────────────────────────────────────────────────────────────
 
@@ -99,6 +105,13 @@ const LIMIT = valueOf("--limit") ? Number(valueOf("--limit")) : undefined;
 // bucket 4 -- and they are where song lyrics and one-line instruction both
 // live, so an audit that never sees them proves nothing about them.
 const SMALLEST = has("--smallest");
+// Second pass. Re-reads only the videos a first pass wants to EXCLUDE and asks
+// a different model whether it agrees. A video leaves the corpus only if both
+// say so, because a false exclude is the one error no later query can recover
+// from; a false keep only costs precision. Measured 2026-08-28: Qwen and Haiku
+// agree on the gate 59/60, and the single disagreement was a Qwen false
+// exclude, which is exactly what this pass exists to catch.
+const VERIFY = has("--verify-excludes");
 
 // ── the prompt ──────────────────────────────────────────────────────────────
 
@@ -124,7 +137,10 @@ interview - a PERSON is the through-line, or the sport is being discussed rather
 promotional - the point is to sell or announce: sales, discount codes, seminars, camps, merchandise, giveaways, book launches, event registration.
 
 no_content - there is essentially no intelligible speech to judge. Song lyrics over silent footage, crowd noise, gym ambience, counting, venue PA announcements, [music] markers, untranslated foreign-language announcing. If you cannot tell what the video is about FROM THE TRANSCRIPT, this is the answer, however specific the title is.
-no_content is about the ABSENCE of speech, never about speech being off-topic, rambling, low quality or uninteresting. If a person is talking in comprehensible sentences, it is not no_content: pick the class that fits what they are actually saying, even if they wander far from grappling.
+off_topic - there IS intelligible speech and it is not about grappling, martial arts, fighting or training at all: finance, cars, travel, other sports, general vlogging. These are submissions nobody ever checked were martial arts. Choose off_topic over no_content whenever someone is genuinely talking and the subject is simply something else.
+
+no_content is about the ABSENCE of speech, never about speech being off-topic, rambling, low quality or uninteresting. If a person is talking in comprehensible sentences it is not no_content: use off_topic when the subject is not grappling, otherwise the class that fits what they are saying.
+Badly transcribed speech is still speech. Automatic transcription in this corpus is often mangled -- "I look to the shoulder feeling lif the sweep from the leg" is somebody teaching a sweep. If you can tell what a person is DOING through the garbling, classify that, not the transcription quality. Reserve no_content for transcripts with nothing to interpret at all: song lyrics, [music] markers, applause, crowd noise, counting, venue announcements in another language.
 
 The event_coverage / interview line is the one that goes wrong most often. Do not decide it by whether the event is live, finished or upcoming, and do not decide it merely because a competition is the topic. Ask what the video IS, not what it is about.
 - You are watching the competition, or a segment produced around it: match footage live or edited, commentary over action, highlights, and brackets, seeding, results, standings or rankings shows. That is event_coverage, including previews and recaps, and including two hosts in a studio running through who is in and who is out.
@@ -317,6 +333,16 @@ const { rows } = await client.query<{
          LEFT JOIN public.rag_transcript_chunks c ON c.video_id = v.video_id
         WHERE v.video_id = ANY($1)
         GROUP BY v.video_id, v.title, v.channel_name`
+    : VERIFY
+    ? `SELECT v.video_id, v.title, v.channel_name,
+              COALESCE(array_agg(c.text ORDER BY c.chunk_index) FILTER (WHERE c.text IS NOT NULL), '{}') AS chunks
+         FROM public.rag_videos v
+         JOIN public.rag_transcript_chunks c ON c.video_id = v.video_id
+        WHERE v.content_kind = ANY($1::text[])
+          AND v.content_kind_verified_model IS NULL
+        GROUP BY v.video_id, v.title, v.channel_name
+        ORDER BY count(c.*) DESC
+        ${LIMIT ? `LIMIT ${Number(LIMIT)}` : ""}`
     : `SELECT v.video_id, v.title, v.channel_name,
               COALESCE(array_agg(c.text ORDER BY c.chunk_index) FILTER (WHERE c.text IS NOT NULL), '{}') AS chunks
          FROM public.rag_videos v
@@ -329,10 +355,10 @@ const { rows } = await client.query<{
   // so it failed before issuing a single model call. Found 2026-08-28 on the
   // first real dry run: every prior run of this script was --eval, which takes
   // the other branch, so the classification path had never executed at all.
-  EVAL ? [goldIds] : [RECLASSIFY],
+  EVAL ? [goldIds] : VERIFY ? [[...EXCLUDED_KINDS]] : [RECLASSIFY],
 );
 
-console.log(`${EVAL ? "EVAL" : DRY_RUN ? "DRY RUN" : "CLASSIFY"}: ${rows.length} videos, model=${MODEL}`);
+console.log(`${EVAL ? "EVAL" : VERIFY ? "VERIFY EXCLUSIONS" : DRY_RUN ? "DRY RUN" : "CLASSIFY"}: ${rows.length} videos, model=${MODEL}`);
 
 const expectedByid = new Map(GOLD.map((item) => [item.video_id, item]));
 let done = 0;
@@ -340,6 +366,7 @@ let correct = 0;
 let gateFalseExcludes = 0;
 const verdicts = new Map<string, Verdict>();
 const failures: string[] = [];
+const rescued: string[] = [];
 const mistakes: string[] = [];
 const tally = new Map<string, number>();
 
@@ -379,6 +406,29 @@ for (const row of rows) {
     const mark = EXCLUDED_KINDS.has(verdict.kind) ? "EXCLUDE" : "keep   ";
     console.log(`  ${mark} ${verdict.kind.padEnd(15)} ${row.video_id}  ${String(row.title).slice(0, 46)}`);
     console.log(`          ${verdict.why.slice(0, 160)}`);
+  } else if (VERIFY) {
+    // Always stamp the verification, so "checked and agreed" is distinguishable
+    // from "never checked". Only overwrite the label when this model disagrees.
+    const overturned = !EXCLUDED_KINDS.has(verdict.kind);
+    if (overturned) {
+      rescued.push(`${row.video_id} "${String(row.title).slice(0, 46)}" -> ${verdict.kind}: ${verdict.why.slice(0, 120)}`);
+      await client.query(
+        `UPDATE public.rag_videos
+            SET content_kind = $2, content_kind_confidence = $3,
+                content_kind_model = $4, content_kind_at = now(),
+                content_kind_verified_model = $4, content_kind_verified_at = now()
+          WHERE video_id = $1`,
+        [row.video_id, verdict.kind, verdict.confidence, MODEL],
+      );
+    } else {
+      await client.query(
+        `UPDATE public.rag_videos
+            SET content_kind_verified_model = $2, content_kind_verified_at = now()
+          WHERE video_id = $1`,
+        [row.video_id, MODEL],
+      );
+    }
+    console.log(`  ${overturned ? "RESCUED" : "agreed  "} ${verdict.kind.padEnd(15)} ${String(row.title).slice(0, 46)}`);
   } else {
     // Committed per video. If this dies at 80%, the 80% is kept and a re-run
     // resumes on content_kind IS NULL.
@@ -396,6 +446,11 @@ for (const row of rows) {
 }
 
 await client.end();
+
+if (VERIFY) {
+  console.log(`\nverified ${done} exclusions; ${rescued.length} overturned and returned to the corpus:`);
+  for (const item of rescued) console.log(`  - ${item}`);
+}
 
 console.log("\ndistribution:");
 for (const kind of KINDS) console.log(`  ${kind.padEnd(16)} ${tally.get(kind) ?? 0}`);

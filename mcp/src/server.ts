@@ -504,7 +504,7 @@ server.registerTool(
  */
 const FILTERS = {
   none: "Nothing removed. This is what search.zencub.com returns today.",
-  curated: "Removes videos classified content_kind = event_coverage or no_content. Unclassified videos are kept, because NULL is 'not looked at yet', not 'fine'.",
+  curated: "Removes videos classified content_kind = event_coverage, no_content or off_topic. Unclassified videos are kept, because NULL is 'not looked at yet', not 'fine'.",
   flagged: "Removes videos the pipeline marked status=failed, martial_arts_relevance=no.",
   instructional: "Removes videos that produced zero technique cards.",
   strict: "Removes both of the above.",
@@ -527,7 +527,7 @@ type VideoFacts = {
 // training_advice, interview and promotional are all things a practitioner may
 // legitimately be searching for, and the plan's whole argument against the
 // relevance flag was that it destroyed the first two.
-const EXCLUDED_CONTENT_KINDS = new Set(["event_coverage", "no_content"]);
+const EXCLUDED_CONTENT_KINDS = new Set(["event_coverage", "no_content", "off_topic"]);
 
 function excludedBy(facts: VideoFacts | undefined, filter: FilterName): string | null {
   if (!facts || filter === "none") return null;

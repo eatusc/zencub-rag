@@ -16,7 +16,8 @@ export type ContentKind =
   | "event_coverage"
   | "interview"
   | "promotional"
-  | "no_content";
+  | "no_content"
+  | "off_topic";
 
 export interface GoldItem {
   video_id: string;
@@ -190,5 +191,41 @@ export const GOLD: GoldItem[] = [
     video_id: "RmFA0TSfdmw",
     expected: "no_content",
     because: "Asian Championships finals. Transcript is Japanese venue PA announcements calling competitors to mats.",
+  },
+
+  // ── off_topic ─────────────────────────────────────────────────────────────
+  // The seventh class, added 2026-08-28 after auditing the first real run. All
+  // four were classified no_content, which is wrong by that class's own
+  // definition: every one is fluent, intelligible English. The model had
+  // nowhere else to put them. These are user_submitted rows whose relevance
+  // check never ran, per PLAN.md.
+  //
+  // The one that proves it mattered is not here but alongside them: "Technical
+  // Stand-up sweep" is garbled ASR of real instruction and was ALSO filed under
+  // no_content, so the wastebasket had already started swallowing keepers.
+  {
+    video_id: "0-1i1awbGgw",
+    expected: "off_topic",
+    because: "Finance commentary: 'we last left off talking about how the economy was booming. Capital good orders at 3.3%'. Fluent speech, nothing to do with grappling.",
+  },
+  {
+    video_id: "IMpLFTscAH4",
+    expected: "off_topic",
+    because: "A Tesla Model 3 delivery review. Intelligible, on-topic for cars, not for jiu-jitsu.",
+  },
+  {
+    video_id: "CxLZ-LAwO4k",
+    expected: "off_topic",
+    because: "Bangkok travel vlog: 'I've been here 4 years and I came here for a girl'. Personal, coherent, not about training.",
+  },
+  {
+    video_id: "7641880975810612510",
+    expected: "off_topic",
+    because: "Streetball: 'Spain is mine defense Barcelona is mine defense'. A different sport entirely.",
+  },
+  {
+    video_id: "tn1xNzFOJo8",
+    expected: "instruction",
+    because: "Garbled ASR of a real sweep lesson: 'My go inside him like this because he know this possibility I look to the shoulder... the sweep from the leg'. Was wrongly excluded as no_content. Bad transcription is not absence of speech.",
   },
 ];
