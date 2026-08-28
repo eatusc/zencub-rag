@@ -173,7 +173,44 @@ const BASE_URL = process.env.CONTENT_KIND_BASE_URL
 const MODEL = process.env.CONTENT_KIND_MODEL ?? process.env.RAG_OPENROUTER_MODEL ?? "";
 const API_KEY = process.env.CONTENT_KIND_API_KEY ?? process.env.OPENROUTER_API_KEY ?? "";
 
+// Ollama's OpenAI-compatible /v1 endpoint cannot turn Qwen3's thinking off.
+// Measured 2026-08-28: with max_tokens 200 it spends all 200 on reasoning and
+// returns finish_reason "length" with content: "" and the thinking in a
+// separate `reasoning` field, so every row fails to parse. `enable_thinking`
+// via chat_template_kwargs on /v1 is ignored too. The native /api/chat endpoint
+// does honour `think: false`, and returns clean JSON in ~0.6s, so a local run
+// uses that transport instead of pretending one API fits both.
+const OLLAMA_URL = process.env.CONTENT_KIND_OLLAMA_URL ?? "";
+
+function userMessage(title: string, channel: string, transcript: string): string {
+  return `Title: ${title}\nChannel: ${channel}\n\nTRANSCRIPT:\n${transcript || "(empty)"}`;
+}
+
+/** Local Ollama, native endpoint, thinking disabled. Returns the raw reply. */
+async function askOllama(title: string, channel: string, transcript: string): Promise<string> {
+  const response = await fetch(`${OLLAMA_URL.replace(/\/$/, "")}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: MODEL,
+      stream: false,
+      think: false,
+      options: { temperature: 0, num_predict: 300 },
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: userMessage(title, channel, transcript) },
+      ],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${(await response.text()).slice(0, 300)}`);
+  }
+  const payload = await response.json() as { message?: { content?: string } };
+  return payload.message?.content ?? "";
+}
+
 async function classify(title: string, channel: string, transcript: string): Promise<Verdict> {
+  if (OLLAMA_URL) return parseVerdict(await askOllama(title, channel, transcript));
   const response = await fetch(`${BASE_URL.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -212,7 +249,10 @@ async function classify(title: string, channel: string, transcript: string): Pro
     throw error;
   }
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const raw = payload.choices?.[0]?.message?.content ?? "";
+  return parseVerdict(payload.choices?.[0]?.message?.content ?? "");
+}
+
+function parseVerdict(raw: string): Verdict {
   const match = /\{[\s\S]*\}/.exec(raw);
   if (!match) throw new Error(`No JSON in model reply: ${raw.slice(0, 200)}`);
   const parsed = JSON.parse(match[0]) as Partial<Verdict>;
