@@ -1,19 +1,21 @@
-// Which surface this process serves. One codebase, three deployments:
+// Which surface this process serves. One codebase, four deployments:
 //
 //   public      -> search.zencub.com      : transcript search only (text, semantic, ask)
 //   instructors -> instructors.zencub.com : the Instructor Compare workflow
 //   full        -> demo.zencub.com        : every tab, PIN gated
+//   mcp         -> 127.0.0.1 only         : retrieval for the MCP server, never tunnelled
 //
 // APP_MODE is read at build time (Next inlines it into the middleware bundle),
 // so each deployment gets its own build directory. See scripts/deploy/build.sh.
 
 import type { AnswerProvider } from "@/lib/providers";
 
-export type AppMode = "public" | "instructors" | "full";
+export type AppMode = "public" | "instructors" | "full" | "mcp";
 
 export function getAppMode(): AppMode {
   if (process.env.APP_MODE === "public") return "public";
   if (process.env.APP_MODE === "instructors") return "instructors";
+  if (process.env.APP_MODE === "mcp") return "mcp";
   return "full";
 }
 
@@ -52,6 +54,34 @@ export function isInstructorsApiRoute(pathname: string): boolean {
 // so the surface stays the landing page plus its permalinks.
 export function isInstructorsPagePath(pathname: string): boolean {
   return pathname === "/" || /^\/c\/[0-9a-f-]{36}$/i.test(pathname);
+}
+
+// The MCP surface exists so the MCP server can reach the real retrieval
+// pipeline -- buildCandidates, rerankCandidates, the technique-card path --
+// without any of it appearing on a tunnelled host.
+//
+// It is a separate deployment rather than a route on the public one for two
+// reasons, both measured rather than assumed:
+//
+//   1. /api/rag/ask cannot be reused. The site-wide daily answer budget is
+//      consumed in middleware keyed on that pathname, before the handler ever
+//      reads the body, so no request flag can opt out of it. Retrieval calls
+//      would spend search.zencub.com's Ask allowance and eventually show real
+//      users "Ask AI has hit its daily limit".
+//   2. Retrieval is not free: an embedding call plus a rerank per request.
+//      Publishing that on a tunnelled host would be an uncapped spend path,
+//      and clientIp() reads caller-supplied headers, so it cannot be cheaply
+//      restricted to loopback at the application layer.
+//
+// This build is served on loopback with no Cloudflare Tunnel in front of it.
+// That, not a header check, is what keeps it private.
+export const MCP_API_ROUTES = [
+  "/api/health",
+  "/api/rag/retrieve",
+] as const;
+
+export function isMcpApiRoute(pathname: string): boolean {
+  return MCP_API_ROUTES.some((route) => pathname === route);
 }
 
 // Which model answers on the public search site. Local Qwen is free but takes

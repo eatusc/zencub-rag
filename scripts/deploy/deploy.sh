@@ -66,10 +66,33 @@ fi
 
 DEPLOY_WILL_RESTART=1 ./scripts/deploy/build.sh
 
+# Restart a surface, tolerating one that is not installed on this machine yet.
+#
+# This exists because of a near miss: adding the mcp surface to the list below
+# while its plist was not yet bootstrapped would have made kickstart return
+# non-zero under `set -e`, aborting the deploy *after* build.sh had already
+# rewritten the bundles. Every live surface would then have been serving a
+# freshly built directory it had never restarted into -- which is the exact
+# failure this file's header says it exists to prevent.
+#
+# A missing job warns loudly and continues. A job that IS installed and fails
+# to restart is still a hard failure, because that one is real.
+restart_surface() {
+  local label="$1"
+  if ! launchctl print "gui/$UID_NUM/$label" >/dev/null 2>&1; then
+    echo "    WARNING: $label is not installed; skipping its restart."
+    echo "             Install it with:"
+    echo "             launchctl bootstrap gui/$UID_NUM ~/Library/LaunchAgents/$label.plist"
+    return 0
+  fi
+  launchctl kickstart -k "gui/$UID_NUM/$label"
+}
+
 echo "==> Restarting all surfaces"
-launchctl kickstart -k "gui/$UID_NUM/local.zencub-rag-public"
-launchctl kickstart -k "gui/$UID_NUM/local.zencub-rag-instructors"
-launchctl kickstart -k "gui/$UID_NUM/local.zencub-rag-demo"
+restart_surface local.zencub-rag-public
+restart_surface local.zencub-rag-instructors
+restart_surface local.zencub-rag-demo
+restart_surface local.zencub-rag-mcp
 
 # Verify against the stamp rather than a 200, so a server that came back up on
 # the previous bundle still counts as a failed deploy.

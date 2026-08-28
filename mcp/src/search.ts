@@ -23,67 +23,105 @@ export type RetrievalHit = {
 
 export type SearchMode = "text" | "semantic" | "both";
 
-const ENDPOINTS: Record<Exclude<SearchMode, "both">, string> = {
-  text: "/api/rag/search",
-  semantic: "/api/rag/vector-search",
-};
+/** The app's real pipeline, on the loopback-only APP_MODE=mcp build. */
+const RETRIEVE_ENDPOINT = "/api/rag/retrieve";
 
+/**
+ * Defaults to the MCP surface on 3421, not the public site on 3418.
+ *
+ * Pointing at 3418 would work for the two single-mode endpoints and is what
+ * this did originally, but it is the wrong host on purpose now: /api/rag/ask
+ * spends search.zencub.com's daily answer budget in middleware before the
+ * handler runs, and every call to the two search routes writes a row into
+ * rag_search_logs tagged as ordinary site traffic.
+ */
 export function retrievalBaseUrl(): string {
-  return (process.env.MCP_RETRIEVAL_BASE_URL ?? "http://127.0.0.1:3418").replace(/\/+$/, "");
+  return (process.env.MCP_RETRIEVAL_BASE_URL ?? "http://127.0.0.1:3421").replace(/\/+$/, "");
 }
 
-async function callEndpoint(
-  mode: Exclude<SearchMode, "both">,
+// There is deliberately no fusion function here any more.
+//
+// This file used to RRF the two single-mode endpoints together. With two
+// disjoint ten-item lists, rank i in either list scores identically at
+// 1/(k+i+1), so every position was a two-way tie; JavaScript's sort is stable
+// and the text list was passed first, so keyword won every tie and the output
+// was a zipper -- text, vector, text, vector -- rather than a ranking. Measured
+// across eight queries on 2026-08-28 the alternation was exact, which is what
+// proved it was tie-breaking and not relevance.
+//
+// The fix was not a better constant. It was to stop ranking here at all. The
+// app already fuses, reranks, diversifies and refines timestamps in one place,
+// and now this calls it. If a second fusion ever reappears in this file, the
+// two surfaces have started to diverge again, which is the thing the Phase 2
+// decision was supposed to prevent and did not.
+
+/**
+ * The app's own retrieval, stopping short of answer generation.
+ *
+ * This is the whole point of the MCP surface: buildCandidates fuses vector and
+ * text with the app's RRF, rerankCandidates reorders by actual relevance,
+ * capPerVideo keeps one video from taking every slot, and refineResultTimestamps
+ * moves each hit to the moment the thing is said. None of that was reachable
+ * through the two single-mode endpoints.
+ */
+async function retrieveViaPipeline(
   query: string,
   limit: number,
   timeoutMs: number,
-): Promise<{ hits: RetrievalHit[]; error?: string }> {
-  const url = `${retrievalBaseUrl()}${ENDPOINTS[mode]}?q=${encodeURIComponent(query)}&limit=${limit}`;
+  retrieval?: "text" | "vector",
+): Promise<{ hits: RetrievalHit[]; warnings: string[]; meta: Record<string, unknown> }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(`${retrievalBaseUrl()}${RETRIEVE_ENDPOINT}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query, limit, ...(retrieval ? { retrieval } : {}) }),
+      signal: controller.signal,
+    });
     if (!response.ok) {
-      return { hits: [], error: `${mode} search returned HTTP ${response.status}` };
+      // 404 here almost always means the base URL points at the public or
+      // instructors build, which do not expose this route. Say that, rather
+      // than letting it read as "the corpus had nothing".
+      const hint = response.status === 404
+        ? ` -- ${retrievalBaseUrl()} does not serve ${RETRIEVE_ENDPOINT}. Is the APP_MODE=mcp build running on this port?`
+        : "";
+      return { hits: [], warnings: [`retrieval returned HTTP ${response.status}${hint}`], meta: {} };
     }
-    const body = (await response.json()) as { results?: RetrievalHit[]; error?: string };
-    if (body.error) return { hits: [], error: `${mode} search: ${body.error}` };
-    return { hits: body.results ?? [] };
+    const body = await response.json() as {
+      results?: RetrievalHit[];
+      retrieval?: string;
+      reranked?: boolean;
+      degraded?: string;
+      error?: string;
+    };
+    if (body.error) return { hits: [], warnings: [`retrieval: ${body.error}`], meta: {} };
+    const warnings: string[] = [];
+    if (body.degraded) warnings.push(body.degraded);
+    const hits = body.results ?? [];
+    // Reranking narrows to the app's RESULT_LIMIT before this route slices, so
+    // a large limit cannot be satisfied. Disclose it rather than returning
+    // fewer results than asked for with no explanation.
+    if (hits.length < limit) {
+      warnings.push(
+        `Returned ${hits.length} of ${limit} requested. The app's rerank narrows the pool to its own result limit, so asking for more does not widen it.`,
+      );
+    }
+    return {
+      hits,
+      warnings,
+      meta: { retrieval_mode: body.retrieval ?? "unknown", reranked: body.reranked ?? false },
+    };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    // The app runs under launchd on this host. If it is down, say so plainly
-    // rather than returning an empty result set that reads like "no matches".
-    return { hits: [], error: `${mode} search unreachable at ${retrievalBaseUrl()}: ${detail}` };
+    return {
+      hits: [],
+      warnings: [`retrieval unreachable at ${retrievalBaseUrl()}: ${detail}`],
+      meta: {},
+    };
   } finally {
     clearTimeout(timer);
   }
-}
-
-/**
- * Reciprocal rank fusion across the two modes.
- *
- * The app blends its own retrieval internally; this only merges the two
- * endpoints, which return independently ranked lists. k=60 is the usual
- * constant and only affects how sharply early ranks dominate.
- */
-export function fuse(lists: RetrievalHit[][], k = 60): RetrievalHit[] {
-  const scores = new Map<string, { hit: RetrievalHit; score: number; modes: number }>();
-  for (const list of lists) {
-    list.forEach((hit, index) => {
-      const key = hit.id;
-      const entry = scores.get(key);
-      const contribution = 1 / (k + index + 1);
-      if (entry) {
-        entry.score += contribution;
-        entry.modes += 1;
-      } else {
-        scores.set(key, { hit, score: contribution, modes: 1 });
-      }
-    });
-  }
-  return [...scores.values()]
-    .sort((a, b) => b.score - a.score)
-    .map((entry) => entry.hit);
 }
 
 export async function retrieve(
@@ -91,26 +129,12 @@ export async function retrieve(
   query: string,
   limit: number,
   timeoutMs: number,
-): Promise<{ hits: RetrievalHit[]; warnings: string[] }> {
-  const warnings: string[] = [];
-  if (mode !== "both") {
-    const { hits, error } = await callEndpoint(mode, query, limit, timeoutMs);
-    if (error) warnings.push(error);
-    return { hits, warnings };
-  }
-  const [text, semantic] = await Promise.all([
-    callEndpoint("text", query, limit, timeoutMs),
-    callEndpoint("semantic", query, limit, timeoutMs),
-  ]);
-  if (text.error) warnings.push(text.error);
-  if (semantic.error) warnings.push(semantic.error);
-  // Semantic needs OPENAI_API_KEY. Degrading to text alone is fine, but the
-  // caller has to be told, or it will read a thinner result set as the corpus
-  // having less to say.
-  if (semantic.error && text.hits.length > 0) {
-    warnings.push("Degraded to text-only retrieval. Results are keyword matches, not semantic.");
-  }
-  return { hits: fuse([text.hits, semantic.hits]), warnings };
+): Promise<{ hits: RetrievalHit[]; warnings: string[]; meta: Record<string, unknown> }> {
+  // Every mode now goes through the app's pipeline. "text" and "semantic" pin
+  // the retrieval side but still get the rerank, the diversity cap and the
+  // timestamp refinement, which the raw single-mode endpoints never applied.
+  if (mode === "both") return retrieveViaPipeline(query, limit, timeoutMs);
+  return retrieveViaPipeline(query, limit, timeoutMs, mode === "semantic" ? "vector" : "text");
 }
 
 // ── deep links ──────────────────────────────────────────────────────────────

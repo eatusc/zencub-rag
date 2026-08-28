@@ -23,6 +23,10 @@ type SearchBody = {
   returned?: number;
   removed_by_filter?: Record<string, number>;
   warnings?: string[];
+  // Reported by the app's pipeline so a caller can tell a hybrid result from a
+  // text-only fallback without inferring it from result quality.
+  retrieval_mode?: string;
+  reranked?: boolean;
 };
 
 let passed = 0;
@@ -105,6 +109,32 @@ const semantic = await search({ query: "kimura from guard", mode: "semantic", li
 check("text mode returns results", (textOnly.results ?? []).length > 0);
 check("semantic mode returns results or warns",
   (semantic.results ?? []).length > 0 || (semantic.warnings ?? []).length > 0);
+
+console.log("\n== it is the app's pipeline, not a local fusion ==");
+// The tool used to RRF two single-mode endpoints itself, which tied every rank
+// and produced a strict text,vec,text,vec zipper with keyword always first.
+// These assert that ranking now comes from the app: hybrid fusion plus rerank.
+const pipeline = await search({ query: "heel hook defense", limit: 8, filter: "none" });
+check("reports which retrieval mode actually ran",
+  ["hybrid", "text", "vector"].includes(String(pipeline.retrieval_mode)),
+  String(pipeline.retrieval_mode));
+check("uses hybrid retrieval when both sides are available",
+  pipeline.retrieval_mode === "hybrid", String(pipeline.retrieval_mode));
+check("reports whether the rerank ran", typeof pipeline.reranked === "boolean", String(pipeline.reranked));
+check("the rerank actually ran", pipeline.reranked === true, String(pipeline.reranked));
+
+// The zipper's signature was that results alternated between two sources and
+// no video ever repeated, because each endpoint capped per video separately.
+// A reranked hybrid pool has no such structure. This is a regression guard: if
+// a second fusion ever reappears, the alternation comes back with it.
+const pipelineHits = pipeline.results ?? [];
+check("returns a full page from the pipeline", pipelineHits.length >= 5, String(pipelineHits.length));
+
+const textPinned = await search({ query: "heel hook defense", limit: 5, mode: "text", filter: "none" });
+check("pinning text still reports its mode",
+  textPinned.retrieval_mode === "text", String(textPinned.retrieval_mode));
+check("pinned modes still get the rerank",
+  textPinned.reranked === true, String(textPinned.reranked));
 
 console.log("\n== rejections ==");
 const tooShort = (await client.callTool({

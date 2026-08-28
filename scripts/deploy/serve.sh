@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start one production surface. Usage: serve.sh <public|demo>
+# Start one production surface. Usage: serve.sh <public|instructors|demo|mcp>
 #
 # Secrets still come from .env.local, which Next loads on its own. This script
 # only exports the per-deployment overrides, and real process env always wins
@@ -46,6 +46,20 @@ case "$MODE" in
     # latency-sensitive and the gate now stops on its own when a round achieves
     # nothing, so this only bounds the worst case.
     export RAG_COMPARE_MAX_REFINEMENT_ROUNDS="${RAG_COMPARE_MAX_REFINEMENT_ROUNDS:-2}"
+    ;;
+  mcp)
+    export APP_MODE=mcp
+    export NEXT_DIST_DIR=.next-mcp
+    export PORT=3421
+    # Retrieval only: this surface serves /api/health and /api/rag/retrieve and
+    # 404s everything else, including every page. It is bound to loopback and
+    # has no Cloudflare Tunnel in front of it, which is what keeps it private --
+    # not a header check, because clientIp() reads caller-supplied headers.
+    export LANGGRAPH_TEST_MODE=off
+    # No answer generation happens here, so there is no ask budget to set. The
+    # deliberate absence is the point: /api/rag/ask consumes search.zencub.com's
+    # daily allowance in middleware before the handler runs, which is exactly
+    # why MCP retrieval is not served from that route.
     ;;
   demo)
     export APP_MODE=full

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   isInstructorsApiRoute,
   isInstructorsPagePath,
+  isMcpApiRoute,
   isPublicApiRoute,
   publicInstructorsPanelSize,
   publicInstructorsProvider,
@@ -46,6 +47,57 @@ describe("isPublicApiRoute", () => {
   it("does not match on prefix, so a suffixed path cannot slip through", () => {
     expect(isPublicApiRoute("/api/rag/search/../instructor-compare")).toBe(false);
     expect(isPublicApiRoute("/api/rag/asking")).toBe(false);
+  });
+});
+
+// The MCP retrieval surface runs an embedding plus a rerank per call and is
+// served on loopback with no tunnel. These assertions are the guard that it
+// never leaks onto a public host, and that adding it took nothing away from the
+// two that were already there.
+describe("isMcpApiRoute", () => {
+  it("allows only health and the retrieval route", () => {
+    expect(isMcpApiRoute("/api/health")).toBe(true);
+    expect(isMcpApiRoute("/api/rag/retrieve")).toBe(true);
+  });
+
+  it("does not expose search, ask, or any workflow route", () => {
+    expect(isMcpApiRoute("/api/rag/search")).toBe(false);
+    expect(isMcpApiRoute("/api/rag/vector-search")).toBe(false);
+    expect(isMcpApiRoute("/api/rag/ask")).toBe(false);
+    expect(isMcpApiRoute("/api/rag/instructor-compare")).toBe(false);
+    expect(isMcpApiRoute("/api/instructors/compare")).toBe(false);
+  });
+
+  it("does not match on prefix", () => {
+    expect(isMcpApiRoute("/api/rag/retrieve/all")).toBe(false);
+    expect(isMcpApiRoute("/api/rag/retrieved")).toBe(false);
+  });
+});
+
+describe("the retrieval route stays off the public surfaces", () => {
+  // The reason this matters is a measured one: /api/rag/ask consumes
+  // search.zencub.com's daily answer budget in middleware, keyed on the
+  // pathname, before the handler reads the body. Retrieval had to become a
+  // separate route on a separate build precisely so it could never draw on it.
+  it("search.zencub.com does not serve /api/rag/retrieve", () => {
+    expect(isPublicApiRoute("/api/rag/retrieve")).toBe(false);
+  });
+
+  it("instructors.zencub.com does not serve /api/rag/retrieve", () => {
+    expect(isInstructorsApiRoute("/api/rag/retrieve")).toBe(false);
+  });
+
+  it("adding it took nothing away from the public surface", () => {
+    expect(isPublicApiRoute("/api/rag/search")).toBe(true);
+    expect(isPublicApiRoute("/api/rag/vector-search")).toBe(true);
+    expect(isPublicApiRoute("/api/rag/ask")).toBe(true);
+    expect(isPublicApiRoute("/api/health")).toBe(true);
+  });
+
+  it("adding it took nothing away from the instructors surface", () => {
+    expect(isInstructorsApiRoute("/api/instructors/compare")).toBe(true);
+    expect(isInstructorsApiRoute("/api/instructors/runs")).toBe(true);
+    expect(isInstructorsApiRoute("/api/health")).toBe(true);
   });
 });
 

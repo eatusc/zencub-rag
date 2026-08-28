@@ -535,25 +535,29 @@ server.registerTool(
   {
     title: "Search the transcript corpus",
     description:
-      "Search what instructors actually said, across 14,274 transcript chunks. Ranking comes from the app's own retrieval, so results match search.zencub.com. Returns timestamped evidence with deep links; follow up with get_transcript_window to read around a hit, or get_instructor to see what else that person covers.",
+      "Search what instructors actually said, across 14,274 transcript chunks. Ranking is the app's own pipeline -- hybrid fusion, LLM rerank, per-video diversity and timestamp refinement -- not a keyword match. Returns timestamped evidence with deep links; follow up with get_transcript_window to read around a hit, or get_instructor to see what else that person covers.",
     inputSchema: {
       query: z.string().min(2).describe("What to search for, in natural language."),
       mode: z.enum(["text", "semantic", "both"]).default("both")
-        .describe("text = keyword, semantic = embeddings, both = fused. Semantic needs the app's OpenAI key."),
+        .describe("Which retrieval side to use. 'both' lets the app fuse keyword and embeddings, and is almost always right; 'text' and 'semantic' pin one side but still get the rerank and diversity pass."),
       limit: z.number().int().min(1).max(25).default(10).describe("Results to return."),
       filter: z.enum(["none", "flagged", "instructional", "strict"]).default("flagged")
         .describe("Which non-instructional content to drop. 'none' reproduces the live site."),
     },
   },
   async ({ query, mode, limit, filter }) => {
-    // Over-fetch so filtering still leaves a full page.
-    const fetchLimit = Math.min(limit * 3, 50);
-    const { hits, warnings } = await retrieve(mode, query, fetchLimit, 20_000);
+    // Over-fetching no longer widens the pool: the app's rerank narrows to its
+    // own result limit before this route slices, so asking for triple returns
+    // the same rows. Ask for what was requested and let the pipeline disclose
+    // when it returned fewer. Retrieval now runs an embedding plus a rerank, so
+    // it is slower than the old two-endpoint call; the timeout allows for that.
+    const { hits, warnings, meta } = await retrieve(mode, query, limit, 45_000);
     if (hits.length === 0) {
       return json({
         query,
         mode,
         filter,
+        ...meta,
         results: [],
         warnings: warnings.length > 0 ? warnings : ["No matches. Retrieval reached the corpus and found nothing."],
       });
@@ -590,6 +594,9 @@ server.registerTool(
       mode,
       filter,
       filter_meaning: FILTERS[filter],
+      // What the app actually ran, so a caller can tell a hybrid result from a
+      // text-only fallback rather than inferring it from result quality.
+      ...meta,
       retrieved: hits.length,
       removed_by_filter: removed,
       returned: page.length,
@@ -636,7 +643,12 @@ server.registerTool(
       let retrieval: Record<string, unknown>;
       const retrievalStarted = Date.now();
       try {
-        const response = await fetch(`${retrievalUrl}/api/rag/search?q=health&limit=1`, {
+        // Probe /api/health, not a real search. The retrieval route runs an
+        // embedding plus a rerank and writes a row to rag_search_logs, so
+        // health checks used to cost money and pollute the analytics they were
+        // meant to be independent of. /api/health is also the one path the MCP
+        // surface serves besides retrieval, so this works on every build.
+        const response = await fetch(`${retrievalUrl}/api/health`, {
           signal: AbortSignal.timeout(5_000),
         });
         retrieval = {

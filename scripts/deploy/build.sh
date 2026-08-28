@@ -4,6 +4,7 @@
 #   .next-public      -> APP_MODE=public      (search.zencub.com)
 #   .next-instructors -> APP_MODE=instructors (instructors.zencub.com)
 #   .next-demo        -> APP_MODE=full        (demo.zencub.com)
+#   .next-mcp         -> APP_MODE=mcp         (127.0.0.1 only, never tunnelled)
 #
 # Two builds rather than one shared build because APP_MODE is inlined into the
 # middleware bundle at build time, and because the dev server on port 3417 keeps
@@ -29,6 +30,12 @@ APP_MODE=instructors NEXT_DIST_DIR=.next-instructors npx next build
 echo "==> Building full demo surface (.next-demo)"
 APP_MODE=full NEXT_DIST_DIR=.next-demo npx next build
 
+# Retrieval for the MCP server. Loopback only: it exposes /api/rag/retrieve,
+# which runs an embedding plus a rerank per call and is therefore never put
+# behind the Cloudflare Tunnel.
+echo "==> Building MCP retrieval surface (.next-mcp)"
+APP_MODE=mcp NEXT_DIST_DIR=.next-mcp npx next build
+
 echo "==> Built $BUILD_SHA."
 
 # deploy.sh restarts on its own immediately after this, so the stale-servers
@@ -40,4 +47,5 @@ if [ -z "${DEPLOY_WILL_RESTART:-}" ]; then
   echo "    launchctl kickstart -k gui/$(id -u)/local.zencub-rag-public"
   echo "    launchctl kickstart -k gui/$(id -u)/local.zencub-rag-instructors"
   echo "    launchctl kickstart -k gui/$(id -u)/local.zencub-rag-demo"
+  echo "    launchctl kickstart -k gui/$(id -u)/local.zencub-rag-mcp"
 fi

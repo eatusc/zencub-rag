@@ -621,3 +621,105 @@ getting my guard passed", "escaping bottom side control".
 
 `smoke-test.ts` 60 passed 0 failed; `search-test.ts` 20 passed 0 failed;
 `npm run typecheck` clean; `npx eslint mcp` clean.
+
+## 2026-08-28 - A fourth deployment, so MCP retrieval uses the app's real pipeline
+
+Replaced the MCP server's own fusion with the app's retrieval, without changing
+what either public site serves. The blast-radius question was asked first and
+answered from the code, which changed the design.
+
+### The proposed fix would not have worked
+
+The plan was a `retrieve_only` flag on `/api/rag/ask`. It cannot work:
+`consumeDailyAskBudget()` runs in `src/middleware.ts` keyed on
+`pathname === "/api/rag/ask"`, **before the handler reads the body**, so no
+request flag can opt out of it. Every MCP retrieval would have spent one of
+search.zencub.com's 2,000 daily Ask allocations, and on exhaustion real visitors
+see "Ask AI has hit its daily limit". The ~60 test searches run earlier in this
+session would have taken 60 of them.
+
+Also ruled out: exposing the route on the public surface behind a loopback
+check. `clientIp()` reads `cf-connecting-ip`, `x-forwarded-for` and
+`x-real-ip` and never the socket, so it is caller-controlled and cannot gate
+anything.
+
+### Built: APP_MODE=mcp, loopback only
+
+- `src/lib/appMode.ts` - fourth mode with `MCP_API_ROUTES` = health plus
+  `/api/rag/retrieve`, and nothing else.
+- `src/middleware.ts` - `mcpMiddleware`: 404s everything off the allowlist
+  including every page, and meters retrieval as `search`, never `ask`.
+- `src/app/api/rag/retrieve/route.ts` - calls `buildCandidates`,
+  `rerankCandidates` and `refineResultTimestamps`, stops before
+  `generateAnswer`.
+- `scripts/deploy/{build,serve,deploy}.sh` and a launchd plist for port 3421,
+  with no Cloudflare Tunnel in front of it.
+- `mcp/src/search.ts` - calls the new route; `fuse()` **deleted**.
+
+**`ragPipeline.ts` was not touched, deliberately.** instructors.zencub.com
+reaches `buildCandidates` and `metadataResults` through
+`instructorCompareGraph` as a library import, so a change there would land in
+the comparison workflow. The route layer was the only safe place.
+
+### Blast radius, established before writing code and asserted after
+
+- **instructors.zencub.com: unaffected.** `instructorsMiddleware` 404s
+  everything outside `INSTRUCTORS_API_ROUTES`, which the new route is not in.
+- **search.zencub.com: unaffected.** The route is not in `PUBLIC_API_ROUTES`.
+  Deliberate: retrieval costs an embedding plus a rerank per call, and putting
+  that on a tunnelled host would be an uncapped spend path.
+- Seven new assertions in `tests/deploymentGating.test.ts` hold both directions
+  -- the route is absent from both public surfaces, and neither lost a route it
+  had. **All 69 pre-existing tests still pass**, which is the actual evidence.
+- Verified live on the running surfaces after the change: 3418 health 200,
+  3420 health 200, 3419 401 (demo PIN, correct).
+
+### A near miss worth recording
+
+Adding `local.zencub-rag-mcp` to `deploy.sh`'s restart list would have broken
+deploys. The script runs `set -euo pipefail` and the job is not installed, so
+`launchctl kickstart` on a missing label returns non-zero and would have aborted
+the deploy **after** `build.sh` had rewritten every bundle -- leaving all three
+live surfaces on a freshly built directory they had never restarted into, which
+is the precise failure that file's header says it exists to prevent.
+
+`restart_surface()` now warns loudly and continues for a job that is not
+installed, while a job that *is* installed and fails to restart remains a hard
+failure. Silence is not the same signal as success in either direction.
+
+### Search logs are separated now
+
+`mcp/migrations/0003-search-log-mcp-action.sql` widens the CHECK on
+`rag_search_logs.action` to admit `mcp`; applied to TEST. Widening a CHECK
+cannot reject an existing row, so nothing was backfilled. Verified by reading
+the table back: 23 rows tagged `action=mcp` (hybrid 14, vector 5, text 4), and
+the mislabelled `keyword`/`semantic` rows stop at the cutover. Human traffic is
+now `action <> 'mcp'`. Rows already written as site traffic are not corrected;
+they are indistinguishable from it by construction.
+
+Also fixed: `health` probed `/api/rag/search?q=health`, which ran a real search
+and wrote a log row on every health check. It now probes `/api/health`.
+
+### What this fixed, and what it did not
+
+`heel hook defense` now returns the Leduc seminar, Volkanovski and Craig Jones
+on the back escape, and Eddie Cummings on inside sankaku in slots 2-4, none of
+which the zipper ever surfaced, and the response reports `retrieval=hybrid`,
+`reranked=true`.
+
+**"2026 Polaris 37" is still #1.** The app's own rerank does not solve event
+coverage. Only `content_kind` does, which leaves Phase 5 Tier 1 exactly where it
+was rather than partly addressed.
+
+One more gap found while reading: **`metadataResults` is never called by
+`buildCandidates`.** Only `instructorCompareGraph` and `retrievalSubgraph` use
+it. So the technique-card path is missing from `/api/rag/ask` too, not just from
+MCP, and the Tier 2 claim that cards steer retrieval is true of the LangGraph
+paths only. Recorded in PLAN.md, not fixed.
+
+### Verified
+
+`npm test` 76 passed (69 prior + 7 new); `smoke-test.ts` 60 passed 0 failed;
+`search-test.ts` 27 passed 0 failed (20 prior + 7 new); `npm run typecheck`
+clean; `npx eslint` clean on both `mcp` and the touched app files. Migration
+0003 applied; 0002 still drafted and unapplied.

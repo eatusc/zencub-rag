@@ -5,7 +5,14 @@ database, instead of guessing from what a model remembers.
 
 Status: **Phase 0 and Phase 1 done.** Seven tools live over stdio, registered
 with Claude Code, 37 smoke-test assertions passing against the real database.
-Phase 2 (semantic retrieval) is next. See [PLAN.md](PLAN.md) for the plan and
+Retrieval runs against the loopback-only `APP_MODE=mcp` surface on port 3421
+(`scripts/deploy/serve.sh mcp`), which serves `/api/rag/retrieve`: the app's own
+pipeline, stopping before answer generation. It is a separate deployment because
+`/api/rag/ask` spends search.zencub.com's daily answer budget in middleware
+before the handler runs, and because retrieval costs an embedding plus a rerank
+per call and so is never put behind the Cloudflare Tunnel.
+
+See [PLAN.md](PLAN.md) for the plan and
 [LOG.md](LOG.md) for what actually happened.
 
 ## Layout

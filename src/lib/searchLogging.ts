@@ -1,7 +1,15 @@
 import { createServerSupabase } from "@/lib/supabase";
 import type { AnswerProvider } from "@/lib/providers";
 
-export type SearchAction = "keyword" | "semantic" | "analyze" | "ask" | "follow_up";
+// "mcp" is retrieval served to the MCP server by /api/rag/retrieve. It is a
+// distinct value so agent traffic is separable from people using
+// search.zencub.com: before this existed, every MCP search wrote rows tagged
+// "keyword" and "semantic", indistinguishable from real site visitors.
+// Requires mcp/migrations/0003-search-log-mcp-action.sql, which widens the
+// CHECK constraint on rag_search_logs.action. logSearch swallows database
+// errors, so until that migration is applied these rows are dropped rather
+// than written -- which is still strictly better than mislabelling them.
+export type SearchAction = "keyword" | "semantic" | "analyze" | "ask" | "follow_up" | "mcp";
 
 export type SearchOutcome = {
   success: boolean;

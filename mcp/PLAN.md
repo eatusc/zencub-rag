@@ -203,7 +203,20 @@ the split clean: HTTP for ranking, reader role for corpus facts.
       pollute the public-site analytics, and so this server's own retrieval
       quality is measurable next to the site's.
 
-      **This is not merely missing, it is actively causing harm.** Both routes
+      **Resolved 2026-08-28** for the new route:
+      `mcp/migrations/0003-search-log-mcp-action.sql` widens the CHECK on
+      `rag_search_logs.action` to admit `mcp`, and `/api/rag/retrieve` writes
+      it. Applied to TEST. Widening a CHECK cannot reject an existing row, so
+      nothing was backfilled or relabelled. Verified live: 23 rows tagged
+      `action=mcp` (hybrid 14, vector 5, text 4) while the mislabelled
+      `keyword`/`semantic` rows stop at the cutover. Query human traffic with
+      `action <> 'mcp'`.
+
+      The rows already written by agent traffic as `keyword`/`semantic` are
+      **not** retroactively corrected: they are indistinguishable from real
+      traffic by construction. That damage can be stopped, not undone.
+
+      **Why it mattered.** Both routes
       call `logSearch` themselves, so every `search_transcripts` call already
       writes two rows tagged `action=keyword` and `action=semantic`,
       indistinguishable from a person using search.zencub.com. Measured
@@ -257,13 +270,59 @@ What is missing compared with the real pipeline, all of it in `ragPipeline.ts`:
 - **Cross-mode diversity.** `capPerVideo` runs inside each route separately, so
   one video can occupy several fused slots.
 
-- [ ] **Fix the fusion, and stop pretending it is the app's.** Options, in order
-      of preference: (a) add a retrieval-only mode to `/api/rag/ask` and call
-      the real pipeline, which restores the locked decision as written;
-      (b) weight the lists rather than tying them, and break ties toward
-      semantic; (c) at minimum, report which mode produced each hit so a caller
-      can see the zipper. (a) is the only one that also buys the technique-card
-      path and the rerank.
+- [x] **Fix the fusion, and stop pretending it is the app's.** Done 2026-08-28,
+      as a fourth deployment rather than the flag on `/api/rag/ask` first
+      proposed, because that flag could not have worked:
+
+      **`/api/rag/ask` cannot be reused, measured not assumed.**
+      `consumeDailyAskBudget()` runs in `src/middleware.ts` keyed on
+      `pathname === "/api/rag/ask"`, *before* the handler reads the body. No
+      request flag can opt out of it. Retrieval calls would have spent
+      search.zencub.com's 2,000-a-day Ask allowance and eventually shown real
+      visitors "Ask AI has hit its daily limit". The ~60 test searches in one
+      session would have taken 60 of them.
+
+      **Shipped:** `APP_MODE=mcp`, a fourth build on loopback 3421 serving
+      `/api/health` and `/api/rag/retrieve` and 404ing everything else,
+      including every page. `/api/rag/retrieve` calls `buildCandidates`,
+      `rerankCandidates` and `refineResultTimestamps` and stops before
+      `generateAnswer`.
+
+      **Blast radius, established from the code before writing any of it:**
+
+      - `instructors.zencub.com` cannot see it: `instructorsMiddleware` 404s
+        everything outside `INSTRUCTORS_API_ROUTES`. It reaches the same
+        pipeline functions through `instructorCompareGraph` as a **library
+        import**, which is why the route layer was the only safe place to add
+        this and `ragPipeline.ts` was not modified at all.
+      - `search.zencub.com` cannot see it either: the route is not in
+        `PUBLIC_API_ROUTES`. Deliberate, because retrieval costs an embedding
+        plus a rerank per call and `clientIp()` reads caller-supplied headers
+        (`cf-connecting-ip`, `x-forwarded-for`), so a loopback restriction at
+        the application layer would be spoofable. Not tunnelling it is the
+        control; a header check would not have been.
+      - Seven assertions in `tests/deploymentGating.test.ts` hold both
+        directions: the new route is absent from both public surfaces, and
+        neither lost a route it had. All 69 pre-existing tests still pass.
+
+      The MCP server's own `fuse()` is **deleted**, not left behind a flag. A
+      second ranking implementation is what produced the zipper, and leaving it
+      reachable invites its return.
+
+      **What this did and did not fix.** `heel hook defense` now returns the
+      Leduc seminar, Volkanovski and Craig Jones on the back escape, and Eddie
+      Cummings on inside sankaku in slots 2-4, none of which the zipper ever
+      surfaced. But **"2026 Polaris 37" is still #1 even after the app's own
+      rerank.** The rerank does not solve event coverage; only `content_kind`
+      does. That is the argument for Phase 5 Tier 1, unchanged.
+
+- [ ] **The technique-card path is still not wired in.** `metadataResults`
+      exists in `ragPipeline.ts` but `buildCandidates` never calls it: only
+      `instructorCompareGraph` and `retrievalSubgraph` do. So a query naming a
+      technique still gets no benefit from the structured cards, on the MCP
+      surface *or* on `/api/rag/ask`. The Tier 2 note that cards "steer which
+      chunks retrieval returns" is therefore true of the LangGraph paths only,
+      and was wrong about `/api/rag/ask`.
 
 ### Blocked on the relevance gate
 

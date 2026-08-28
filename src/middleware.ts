@@ -3,6 +3,7 @@ import {
   getAppMode,
   isInstructorsApiRoute,
   isInstructorsPagePath,
+  isMcpApiRoute,
   isPublicApiRoute,
 } from "@/lib/appMode";
 import { DEMO_COOKIE, demoCredentials, verifyDemoCookie } from "@/lib/demoAuth";
@@ -114,6 +115,29 @@ function instructorsMiddleware(request: NextRequest) {
   return NextResponse.next();
 }
 
+// Loopback-only retrieval for the MCP server. No PIN gate, because there is no
+// tunnel in front of this build and a PIN would put a second credential in the
+// MCP process for no gain. Everything outside the two allowlisted API paths,
+// including every page, answers 404: this surface has no UI.
+//
+// Metered as "search" rather than "ask" on purpose. Retrieval costs an
+// embedding plus a rerank, which is worth bounding against a runaway agent
+// loop, but it must never draw on the public site's daily answer budget.
+function mcpMiddleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  if (!isMcpApiRoute(pathname)) {
+    return new NextResponse(null, { status: 404 });
+  }
+
+  if (pathname === "/api/rag/retrieve") {
+    const result = checkRateLimit("search", clientIp(request.headers));
+    if (!result.allowed) return tooManyRequests(result.retryAfterSeconds);
+  }
+
+  return NextResponse.next();
+}
+
 async function fullMiddleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -166,6 +190,7 @@ async function fullMiddleware(request: NextRequest) {
 export function middleware(request: NextRequest) {
   if (MODE === "public") return publicMiddleware(request);
   if (MODE === "instructors") return instructorsMiddleware(request);
+  if (MODE === "mcp") return mcpMiddleware(request);
   return fullMiddleware(request);
 }
 

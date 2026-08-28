@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Description: zencub-rag retrieval surface on 127.0.0.1:3421 (APP_MODE=mcp), serving the MCP server only. Exposes /api/health and /api/rag/retrieve and 404s everything else, including every page. Deliberately NOT behind the Cloudflare Tunnel: /api/rag/retrieve runs an OpenAI embedding plus a rerank per call with no spend cap, and clientIp() reads caller-supplied headers so it could not be restricted to loopback at the app layer. Being unreachable from outside the machine is what keeps it private. It exists as its own surface because /api/rag/ask could not be reused: the site-wide daily answer budget is consumed in middleware keyed on that pathname, before the handler reads the body, so MCP retrieval would have spent search.zencub.com's Ask AI allowance. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.zencub-rag-mcp</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/elai/code/zencub-rag/scripts/deploy/serve.sh</string>
+        <string>mcp</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/elai/code/zencub-rag</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/elai/Library/Logs/zencub-rag/mcp.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/elai/Library/Logs/zencub-rag/mcp.log</string>
+</dict>
+</plist>
