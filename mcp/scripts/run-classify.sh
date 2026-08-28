@@ -31,6 +31,14 @@ classified_count() {
   psql "$DSN" -tAc "SELECT count(content_kind) FROM public.rag_videos" 2>/dev/null || echo "?"
 }
 
+# Videos this script can actually classify. The old pages said "of 3032", the
+# whole table, which includes ~187 videos with no transcript that are never
+# candidates -- so a finished run would have read as stopping 187 short.
+classifiable_count() {
+  psql "$DSN" -tAc "SELECT count(DISTINCT v.video_id) FROM public.rag_videos v
+                      JOIN public.rag_transcript_chunks c ON c.video_id = v.video_id" 2>/dev/null || echo "?"
+}
+
 DSN="$(python3 -c '
 import re,sys
 for line in open(".env.local"):
@@ -58,7 +66,7 @@ RUN_PID=$!
     if [ "$age" -gt "$STALL_SECONDS" ]; then
       page "zencub-rag content_kind classify STALLED
 no output for ${age}s (pid $RUN_PID still alive).
-classified so far: $(classified_count) of 3032
+classified so far: $(classified_count) of $(classifiable_count) classifiable
 log: $LOG"
       exit 0
     fi
@@ -72,12 +80,12 @@ kill "$WATCHDOG_PID" 2>/dev/null
 
 if [ "$status" -eq 0 ]; then
   page "zencub-rag content_kind classify DONE
-classified: $(classified_count) of 3032
+classified: $(classified_count) of $(classifiable_count) classifiable
 
 $(sed -n '/^distribution:/,$p' "$LOG" | head -10)"
 else
   page "zencub-rag content_kind classify FAILED (exit $status)
-classified before dying: $(classified_count) of 3032
+classified before dying: $(classified_count) of $(classifiable_count) classifiable
 The run commits per video, so this is kept and a re-run resumes on
 content_kind IS NULL.
 

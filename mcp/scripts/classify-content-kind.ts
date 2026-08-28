@@ -183,6 +183,13 @@ async function classify(title: string, channel: string, transcript: string): Pro
     body: JSON.stringify({
       model: MODEL,
       temperature: 0,
+      // The reply is one small JSON object, ~60 tokens. Left unset, OpenRouter
+      // defaults to the model's full output ceiling (64,000 for Haiku 4.5) and
+      // then refuses the request unless the key can AFFORD 64,000 output
+      // tokens up front. That is a pre-flight affordability check, not
+      // consumption, and it is what 402'd this run with $0.31 still on the key
+      // ("you requested up to 64000 tokens, but can only afford 63538").
+      max_tokens: 200,
       messages: [
         { role: "system", content: SYSTEM },
         {
@@ -193,7 +200,16 @@ async function classify(title: string, channel: string, transcript: string): Pro
     }),
   });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${(await response.text()).slice(0, 300)}`);
+    const body = (await response.text()).slice(0, 300);
+    const error = new Error(`${response.status} ${response.statusText}: ${body}`);
+    // 402 (out of credit) and 401 (bad key) are conditions of the run, not of
+    // the row. Retrying the next 1,182 videos cannot succeed, and the previous
+    // run proved what that costs: a wall of 1,182 identical errors that buried
+    // the one fact worth reading. Marked so the loop can stop at the first one.
+    if (response.status === 402 || response.status === 401) {
+      (error as Error & { fatal?: boolean }).fatal = true;
+    }
+    throw error;
   }
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   const raw = payload.choices?.[0]?.message?.content ?? "";
@@ -297,6 +313,10 @@ for (const row of rows) {
     const message = error instanceof Error ? error.message : String(error);
     failures.push(`${row.video_id}: ${message}`);
     console.log(`  ERR   ${row.video_id} ${String(row.title).slice(0, 50)} -- ${message.slice(0, 120)}`);
+    if ((error as Error & { fatal?: boolean }).fatal) {
+      console.log(`\nSTOPPING: this is a credential or billing failure, not a bad row. ${done} videos were written and are kept; a re-run resumes on content_kind IS NULL.`);
+      break;
+    }
     continue;
   }
 
