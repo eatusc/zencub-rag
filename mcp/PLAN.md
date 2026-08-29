@@ -382,9 +382,19 @@ What is missing compared with the real pipeline, all of it in `ragPipeline.ts`:
       restart returns a different order and the OFF arm was reading a cold
       server.
 
-### Blocked on the relevance gate
+### Blocked on the relevance gate - released 2026-08-28
 
-- [ ] `search_transcripts` must not ship before the fix in Phase 5 Tier 1.
+- [x] **Released.** `search_transcripts` shipped once the Tier 1 gate existed,
+      which was the condition, not a deadline. `filter=curated` is the default
+      and drops `event_coverage`, `no_content` and `off_topic` using the
+      `content_kind` classification, so the failure this blocked on -- returning
+      FloGrappling commentary as instruction -- is measured as fixed: "heel hook
+      defense" returns the Leduc seminar rather than a Polaris broadcast.
+      One hole remains and is tracked in Tier 1: chunks with no `rag_videos`
+      row cannot be classified at all, so the gate never sees them.
+      Original text follows.
+
+      `search_transcripts` must not ship before the fix in Phase 5 Tier 1.
       2,912 chunks, 20.4% of the corpus, come from 284 videos the pipeline
       rejected as non-instructional (competition livestreams, MMA fight-analysis
       AMAs, debates, interviews). They are fully embedded and
@@ -526,7 +536,13 @@ gassing out" scores 0 literal chunk hits and 123 concept-word hits.
 
 ### Tier 1 - blocking
 
-- [ ] **Content gate, scoped to MCP first. The live sites are not touched.**
+- [~] **Content gate, scoped to MCP first. The live sites are not touched.**
+      **Steps 1-4b are done** (below): the corpus is classified, `filter=curated`
+      is the MCP default, and the keep direction has been audited. **Steps 5-6,
+      taking the gate to the live sites, are deliberately not started** and are
+      a separate decision, per the end-state note at the bottom of this item:
+      excluding is right for a how-to tool, while a search box people also ask
+      about events wants ranking rather than removal.
 
       **`martial_arts_relevance` has four states, not three, and one of them
       is "never ran".** Found 2026-08-28 while chasing the three finance videos
@@ -894,7 +910,10 @@ gassing out" scores 0 literal chunk hits and 123 concept-word hits.
       must be rewritten to the `watch?v=` form; and Instagram reels hold
       techniques as deep as `start_seconds = 216` that cannot be linked into at
       all.
-- [ ] **Phase 2 semantic retrieval.** Nothing else in this tier matters first.
+- [x] **Phase 2 semantic retrieval.** Done, and it was the prerequisite for
+      everything else in this tier. Retrieval runs the app's own hybrid
+      pipeline over `/api/rag/retrieve`; "how do I stop gassing out during
+      rolls", which scores 0 literal chunk hits, returns usable results.
 
 ### Tier 2 - trust
 
