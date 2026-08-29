@@ -1,14 +1,22 @@
 # Deployment
 
-Three surfaces are served from this one codebase, all from the Mac Studio
-through a Cloudflare Tunnel. Nothing about this changes the local dev server.
+Three public surfaces are served from this one codebase through a Cloudflare
+Tunnel, plus a fourth, loopback-only surface for MCP retrieval. Nothing about
+this changes the local dev server.
 
 | Surface | Host | Port | `APP_MODE` | Build dir |
 | --- | --- | --- | --- | --- |
 | Public search | `search.zencub.com` | 3418 | `public` | `.next-public` |
 | Public compare | `instructors.zencub.com` | 3420 | `instructors` | `.next-instructors` |
 | Full demo | `demo.zencub.com` | 3419 | `full` | `.next-demo` |
+| MCP retrieval | loopback only, `127.0.0.1:3421` | 3421 | `mcp` | `.next-mcp` |
 | Local dev | `mac-studio.rove-porgy.ts.net:3417` | 3417 | `full` | `.next` |
+
+The mcp surface serves `/api/rag/retrieve` only (the app's real retrieval
+pipeline, stopping before answer generation) for the [MCP server](../mcp/README.md);
+it is deliberately never put behind the Cloudflare Tunnel. `deploy.sh` builds
+and restarts all four surfaces and verifies all four came back on the new
+commit.
 
 The dev server on 3417 is untouched by any of this: it keeps its own `.next`
 directory, and the PIN gate is skipped outside `NODE_ENV=production`.

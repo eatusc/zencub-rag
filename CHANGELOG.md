@@ -2,6 +2,25 @@
 
 Notable changes to this project. Routine fixes and refactors are not listed.
 
+## 2026-08-28
+
+### Added
+- MCP retrieval now runs through the app's own `/api/rag/retrieve` pipeline (a
+  new loopback-only `APP_MODE=mcp` surface, port 3421) instead of the MCP
+  server fusing two separate search endpoints itself, which had been tying
+  every rank and skipping rerank, cross-mode diversity, and timestamp
+  refinement. See [mcp/README.md](mcp/README.md) and
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- The corpus is now classified by content kind (two-pass: a free local model,
+  then a paid model verifying only what the first pass excluded), adding an
+  `off_topic` class for non-grappling content. `search_transcripts` can filter
+  to `curated`, dropping `event_coverage` and `no_content` videos from
+  retrieval.
+
+### Fixed
+- `get_transcript_window` no longer repeats the overlapping sentence at each
+  boundary of a multi-chunk window.
+
 ## 2026-08-05
 
 ### Added
