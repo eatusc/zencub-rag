@@ -13,9 +13,11 @@ Notable changes to this project. Routine fixes and refactors are not listed.
   [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - The corpus is now classified by content kind (two-pass: a free local model,
   then a paid model verifying only what the first pass excluded), adding an
-  `off_topic` class for non-grappling content. `search_transcripts` can filter
-  to `curated`, dropping `event_coverage` and `no_content` videos from
-  retrieval.
+  `off_topic` class for non-grappling content. `search_transcripts` defaults to
+  `filter: "curated"`, which drops `event_coverage`, `no_content` **and**
+  `off_topic` videos from retrieval, and keeps unclassified ones because NULL is
+  "not looked at yet", not a verdict. `filter: "none"` reproduces what the
+  public site returns.
 
 ### Fixed
 - `get_transcript_window` no longer repeats the overlapping sentence at each

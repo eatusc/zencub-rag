@@ -15,8 +15,11 @@ this changes the local dev server.
 The mcp surface serves `/api/rag/retrieve` only (the app's real retrieval
 pipeline, stopping before answer generation) for the [MCP server](../mcp/README.md);
 it is deliberately never put behind the Cloudflare Tunnel. `deploy.sh` builds
-and restarts all four surfaces and verifies all four came back on the new
-commit.
+and restarts all four surfaces and verifies every one before reporting success:
+3418, 3420 and 3421 must each report the new commit's sha from `/api/health`,
+and 3419 must serve `/unlock`, since its PIN gate fails closed on `/api/health`
+by design. `autodeploy.sh` checks the same four between deploys, so a surface
+that dies on its own triggers a redeploy and pages if it will not come back.
 
 The dev server on 3417 is untouched by any of this: it keeps its own `.next`
 directory, and the PIN gate is skipped outside `NODE_ENV=production`.
