@@ -65,6 +65,23 @@ else
   echo "==> ${before:0:7} -> ${after:0:7}"
 fi
 
+# Decide the target commit ONCE, here, and hand it to the build.
+#
+# This used to be read twice -- build.sh took its own `git rev-parse --short
+# HEAD`, and the verify loop below took another one after the build finished.
+# That is a race, and it fired on 2026-08-29: a commit landed in this checkout
+# while a build was running, so deploy.sh built 81bb252, then waited for the
+# servers to report 0ff5693, then failed and paged. Nothing was broken except
+# the question it asked.
+#
+# This checkout is a development tree as well as the deploy source, so HEAD
+# genuinely can move mid-build. The lock above stops two deploys colliding; it
+# cannot stop a person committing. So the fix is to stop asking twice: build.sh
+# honours an inherited BUILD_SHA, and the verify loop uses the same variable.
+# Whatever HEAD does afterwards, a deploy now verifies exactly what it stamped.
+expected="$(git rev-parse --short "$after")"
+export BUILD_SHA="$expected"
+
 DEPLOY_WILL_RESTART=1 ./scripts/deploy/build.sh
 
 # Restart a surface, tolerating one that is not installed on this machine yet.
@@ -96,8 +113,8 @@ restart_surface local.zencub-rag-demo
 restart_surface local.zencub-rag-mcp
 
 # Verify against the stamp rather than a 200, so a server that came back up on
-# the previous bundle still counts as a failed deploy.
-expected="$(git rev-parse --short HEAD)"
+# the previous bundle still counts as a failed deploy. `expected` was fixed
+# before the build; see the note there.
 
 port_sha() {
   curl -fsS --max-time 5 "http://127.0.0.1:$1/api/health" 2>/dev/null \
