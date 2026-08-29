@@ -3,6 +3,14 @@
 An MCP server that lets a model answer any question about the ZenCub RAG corpus
 by querying the database directly, instead of guessing from what it remembers.
 
+**Where this stopped, 2026-08-28.** Phases 0-3 are done, verified and deployed.
+Phase 4 (HTTP transport) and Phase 5 (the consumer-facing surface) are
+deliberately not started, not abandoned: Phase 4 waits until the tool surface
+stops moving, and Phase 5 is a different product decision about serving members
+rather than the corpus owner. The open items that remain are listed at the end
+of each phase and in Open questions; none of them block the server as it runs
+today.
+
 Status legend: `[ ]` not started, `[~]` in progress, `[x]` done and verified.
 
 ## Why this exists
@@ -50,7 +58,7 @@ not a reason to build retrieval twice.
 | Retrieval implementation | Call the app's core, never reimplement | `src/lib/ragPipeline.ts` already does RRF, rerank, diversity and timestamp refinement. A second implementation would drift silently, because retrieval regressions return worse clips rather than throwing. |
 | Answer generation | None | The MCP client is already a model. Return evidence; let it synthesise. A nested LLM call adds latency, cost, and a second place for citations to drift. |
 
-## Corpus facts (measured 2026-08-27, TEST)
+## Corpus facts (re-measured 2026-08-28, TEST)
 
 Numbers the schema description must carry, because the obvious question has
 several defensible answers and a model will pick one confidently:
@@ -58,12 +66,52 @@ several defensible answers and a model will pick one confidently:
 | Thing | Count | Note |
 | --- | --- | --- |
 | `rag_transcript_chunks` | 14,274 | 100% embedded, 1536-dim |
-| distinct videos with chunks | 2,847 | this is the searchable corpus |
-| `rag_videos` | 3,032 | ~185 have no transcript |
-| `rag_video_transcripts` | 2,847 | matches chunk coverage |
+| distinct `video_id` in chunks | 2,847 | **not the same as the next row** |
+| `v_videos` with `has_transcript` | **2,845** | the classifiable corpus |
+| `rag_videos` | 3,032 | ~187 have no transcript |
+| classified `content_kind` | 2,845 | 100% of the classifiable corpus |
 | `rag_techniques` | 3,432 | |
 | `rag_creators` | 477 | 266 person, 206 channel, 5 publisher |
 | `rag_video_attributions` | 2,846 | all at confidence >= 0.7 |
+
+**Two of those rows disagree on purpose, and the gap is a live defect.** Found
+2026-08-28 while checking this table rather than copying it forward. The earlier
+version recorded "distinct videos with chunks | 2,847 | this is the searchable
+corpus" and "`rag_video_transcripts` | 2,847 | matches chunk coverage". Both
+readings were wrong:
+
+- `v_corpus_stats.videos_with_transcript` reports **2,847** while
+  `count(*) from v_videos where has_transcript` reports **2,845**. A model
+  asking one obvious question two obvious ways gets two answers.
+- The difference is **2 videos, 11 chunks, that have no `rag_videos` row at
+  all**: `AOdHty1zLtA` (10 chunks) and `Lmr6nValYOA` (1 chunk).
+
+`AOdHty1zLtA` is a **fried rice cooking video**. It is fully embedded, has no
+title, no channel and no deep link, and it is **the #1 and #2 result for
+"how to make great fried rice" under the DEFAULT `curated` filter**, returning
+`content_kind: null` and `unclassified_content_kind: 2`.
+
+**No amount of classification can fix this**, which is what makes it different
+from the finance videos that `off_topic` solved. The classifier joins
+`rag_videos`, so a chunk with no video row is never a candidate; the gate keeps
+NULL on the deliberate principle that "not looked at yet" is not a verdict, and
+these are indistinguishable from that. Tracked as an open item under Phase 5
+Tier 1.
+
+### Content classification, as of 2026-08-28
+
+| kind | videos | in `curated`? |
+| --- | --- | --- |
+| `instruction` | 2,110 | kept |
+| `training_advice` | 182 | kept |
+| `interview` | 109 | kept |
+| `promotional` | 57 | kept |
+| `no_content` | 244 | dropped |
+| `event_coverage` | 119 | dropped |
+| `off_topic` | 24 | dropped |
+
+2,458 kept, 387 dropped. Changed from the 2026-08-28 classification run by
+migration 0005, which moved 6 boilerplate-only videos into `no_content`.
 
 Two traps encoded in the views so the model cannot fall into them:
 
@@ -386,9 +434,39 @@ What is missing compared with the real pipeline, all of it in `ragPipeline.ts`:
       This plan previously recorded the true `nogi` answer as 28; measured
       2026-08-28 it is **234 cards over 141 videos**, and 28 is not reproducible
       from `gi_nogi` alone (`no_gi` + `advanced` = 27 is the nearest reading).
-- [ ] Tests: reader role cannot reach `public`; `query_sql` rejects non-SELECT,
-      multi-statement, and CTE-wrapped writes; row cap and timeout hold
-- [ ] Test: schema description counts match live counts (they will drift)
+- [x] Tests: reader role cannot reach `public`; `query_sql` rejects non-SELECT,
+      multi-statement, and CTE-wrapped writes; row cap holds. Done, in
+      `smoke-test.ts`: DELETE, UPDATE, SET, multi-statement, a data-modifying
+      CTE, a write hidden after a comment, and a UNION onto `public.profiles`
+      are each rejected with the expected message (lines 99-106); a direct
+      `select from public.rag_transcript_chunks` is denied (line 123); the row
+      cap and its `truncated` disclosure are asserted (lines 90-91).
+
+      **`statement_timeout` is verified but not exercised.**
+      `verify-reader-role.sh` reads it off the role
+      (`statement_timeout=5s, default_transaction_read_only=on,
+      idle_in_transaction_session_timeout=10s`) and `health()` reports it live,
+      but no test issues a deliberately slow query and asserts it is cut off.
+      The client-side belt-and-braces in `db.ts:147-148` exists precisely
+      because the role setting cannot be trusted to reach a warm pooled
+      connection, and that fallback is the untested half.
+- [ ] Test: schema description counts match live counts (they will drift).
+      **Still open, and 2026-08-28 showed it is not hypothetical**: this plan's
+      own corpus table had carried a wrong figure for a day, and
+      `v_corpus_stats` and `v_videos` disagree about how many videos have a
+      transcript. A test comparing the numbers in `describe_schema` against
+      live counts would have caught both.
+- [x] **Re-verify the reader role after every migration touching a view or a
+      grant.** Run 2026-08-28 after migrations 0002-0005, one of which drops and
+      recreates `v_videos`: all 8 views readable, **0 relations readable outside
+      `rag_mcp`** across `auth` (23), `langgraph` (4), `public` (64) and
+      `storage` (8), INSERT/UPDATE/DELETE all false, CREATE false on every
+      schema, and the live connection reports `read_only = on`. Recreating a
+      view can silently drop its grants, and read access continuing to work does
+      not prove the deny side still holds, so this is not optional after a
+      schema migration. Note `public` has grown 61 -> 64 relations since Phase 0
+      and the enumerated check picked all three up as unreadable without being
+      edited, which is the argument for enumerating rather than listing.
 - [x] **Failure reporting: a dead mcp surface now pages.** Done 2026-08-28,
       and the gap was wider than the plan described. Two defects, both found by
       reading the deploy log rather than by reasoning:
@@ -774,6 +852,31 @@ gassing out" scores 0 literal chunk hits and 123 concept-word hits.
       **End state for the site**: deprioritize and label rather than exclude.
       Excluding is right for a how-to tool; a search box people also ask about
       events wants ranking.
+- [ ] **Chunks with no `rag_videos` row bypass the content gate entirely.**
+      Found 2026-08-28. 2 videos, 11 chunks: `AOdHty1zLtA` (10 chunks, a fried
+      rice cooking video) and `Lmr6nValYOA` (1 chunk). Fully embedded, no title,
+      no channel, no deep link, and **#1 and #2 for "how to make great fried
+      rice" under the default `curated` filter**.
+
+      This is not the `off_topic` problem again, and it cannot be fixed the same
+      way. `classify-content-kind.ts` joins `rag_videos`, so these rows are
+      never candidates and their `content_kind` can never be anything but NULL.
+      The gate keeps NULL on the deliberate principle that unclassified is not a
+      verdict -- correct for a real video nobody has looked at, wrong for a row
+      the classifier structurally cannot reach.
+
+      **The fix is to stop conflating the two**, not to widen the classifier.
+      `unclassifiable` (no video row) and `unclassified` (NULL on a real row)
+      are different statements and the filter should treat them differently:
+      `curated` drops the first and keeps the second. `search_transcripts`
+      already reports `unclassified_content_kind`, which is how this was visible
+      at all -- it read 2 on that query.
+
+      Before changing retrieval, decide what these rows are. A chunk with no
+      video row can never produce a citation or a working link, so it is a
+      dead-end result even when it is genuinely relevant. Deleting them is
+      defensible and destructive; gating them is reversible. Prefer the gate.
+
 - [ ] **Deep links computed server-side, with an honest precision field.**
       Return `deep_link` plus `deep_link_precision` in
       (`timestamp`, `video_only`, `unavailable`). Never emit a timestamp link
@@ -866,12 +969,29 @@ returning exactly what they return today.
    the pooler when set at role creation (verified: `on | 5s | rag_mcp` on both
    ports), but is effectively unchangeable afterwards while a pooled backend is
    warm. See Phase 1.
-2. **`pg_stat_statements` is readable by every role.** Supabase ships it in the
+2. ~~**`pg_stat_statements` is readable by every role.**~~
+   **RESOLVED 2026-08-28: accept and document.** Supabase ships it in the
    `extensions` schema granted to `PUBLIC`, so the reader role can see it too.
-   It exposes normalised query text, not row data. Revoking from `PUBLIC` is a
-   database-wide change, so `verify-reader-role.sh` treats it as a named
-   exception and fails on anything else. Decide: revoke, or accept and document.
-   `dashboard_user` has its own grant, so a revoke would not break the dashboard.
+
+   The decision, and the reasoning rather than the conclusion: what it exposes
+   is **normalised query text with constants replaced by placeholders** -- query
+   shapes, not row data. Revoking from `PUBLIC` is a database-wide change
+   touching every role in the database to remove an exposure of query shapes
+   from one low-privilege role we control. That is a wider blast radius than the
+   risk it removes, on a TEST project, for a server reachable only over stdio on
+   one machine.
+
+   Two things make accepting it safe rather than lazy. `verify-reader-role.sh`
+   treats it as a **named** exception and fails on anything else readable
+   outside `rag_mcp`, so the exposure cannot silently grow -- confirmed again
+   2026-08-28, still exactly 2 relations. And `dashboard_user` holds its own
+   explicit grant, so the revoke remains available at any time without breaking
+   the Supabase dashboard.
+
+   **Revisit if Phase 4 ships.** An HTTP transport with bearer auth means
+   callers who are not Eric on this machine, and "one low-privilege role we
+   control" stops being the right description. That is the trigger, written down
+   so the decision is not silently inherited.
 3. **Row cap for `query_sql`.** A 1536-float embedding row is ~30KB of context,
    which is why `v_chunks` drops the column entirely. Still need a sane default
    cap on returned rows, probably 200 with an explicit override.

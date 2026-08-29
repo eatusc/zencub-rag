@@ -1075,3 +1075,104 @@ non-zero on an empty file, so every count read as `0\n0`.
 Nothing pages when a `search_transcripts` call fails for a reason other than the
 surface being down. The caller does see it (`search.ts:115-121` returns
 "retrieval unreachable"), so it is not silent to whoever asked.
+
+## 2026-08-28 - Closing pass: docs made true, and a hole the gate cannot reach
+
+A wrap-up pass over the seven things that would have misled the next person.
+Every claim below was re-measured rather than copied forward, which is how the
+last item was found.
+
+### The reader role, re-verified after five migrations
+
+`verify-reader-role.sh --live` had not run since Phase 0, and migration 0004
+drops and recreates `v_videos`. **Recreating a view can silently drop its
+grants**, and read access continuing to work does not prove the deny side still
+holds. Re-run, green:
+
+- all 8 `rag_mcp` views readable
+- **0 relations readable outside `rag_mcp`**: `auth` 0/23, `langgraph` 0/4,
+  `public` 0/64, `storage` 0/8, plus the 2 named `pg_stat_statements` relations
+- INSERT/UPDATE/DELETE all false; CREATE false on every schema
+- live connection reports `zencub_mcp_reader`, `read_only = on`, role config
+  `statement_timeout=5s, idle_in_transaction_session_timeout=10s`
+
+`public` has grown **61 -> 64 relations** since Phase 0 and the check picked all
+three up as unreadable without being edited. That is the argument for
+enumerating the catalogue rather than maintaining a list.
+
+### README rewritten, because it was actively wrong
+
+It claimed "Phase 0 and Phase 1 done… Seven tools… 37 smoke-test assertions"
+against a live reality of nine tools and 60 assertions, **omitted
+`search_transcripts` from the tools table entirely** -- the tool the plan calls
+the primary purpose -- and closed with a "Known unknown" saying Supavisor
+pooling with a custom role was untested and "the one thing that could block
+Phase 0", resolved on 2026-08-27. It also said nothing about `content_kind` or
+the curated default, now the biggest behavioural fact about search.
+
+Rewritten with a migrations table (which of the five are applied, and when),
+the credential map including why `CONTENT_KIND_API_KEY` is separate, the test
+battery with what each command needs, and the operational note that
+`search_transcripts` depends on the 3421 surface.
+
+Two claims in the first draft were wrong and were caught by checking them: the
+`src/` listing omitted `transcript.ts`, and "seven assertions in
+`deploymentGating.test.ts`" is 31 cases.
+
+### Open question 2 closed: accept and document
+
+`pg_stat_statements` exposes normalised query text -- shapes, not row data.
+Revoking from `PUBLIC` is a database-wide change touching every role to remove
+that exposure from one low-privilege role we control on a TEST project. Wider
+blast radius than the risk. It stays a **named** exception in
+`verify-reader-role.sh`, which fails on anything else, so it cannot silently
+grow; `dashboard_user` has its own grant so the revoke stays available.
+**Trigger written down: revisit if Phase 4 ships**, because bearer-auth HTTP
+means callers who are not Eric on this machine.
+
+### Phase 3 checkboxes reconciled with reality
+
+The SQL-guard tests the plan listed as open have existed for a day
+(`smoke-test.ts:99-106, 123`, and the row cap at 90-91). Ticked, with one
+honest carve-out: **`statement_timeout` is verified but never exercised.**
+`verify-reader-role.sh` reads it off the role and `health()` reports it live,
+but nothing issues a slow query and asserts it is cut off -- and the
+client-side fallback in `db.ts:147-148`, which exists because the role setting
+cannot be trusted to reach a warm pooled connection, is exactly the untested
+half.
+
+### The corpus table was wrong, and checking it found a live defect
+
+The table said "distinct videos with chunks | 2,847 | this is the searchable
+corpus" and "`rag_video_transcripts` | 2,847 | matches chunk coverage". Both
+readings were wrong, and the two numbers are not the same number:
+
+- `v_corpus_stats.videos_with_transcript` = **2,847**
+- `count(*) from v_videos where has_transcript` = **2,845**
+
+One obvious question, two obvious ways to ask it, two answers. The gap is **2
+videos / 11 chunks with no `rag_videos` row at all**: `AOdHty1zLtA` (10 chunks)
+and `Lmr6nValYOA` (1 chunk).
+
+`AOdHty1zLtA` is a **fried rice cooking video**. Fully embedded, no title, no
+channel, no deep link, and **the #1 and #2 result for "how to make great fried
+rice" under the DEFAULT `curated` filter**, returning `content_kind: null` and
+`unclassified_content_kind: 2`.
+
+**This one cannot be fixed by classifying harder**, which is what separates it
+from the finance videos `off_topic` solved. `classify-content-kind.ts` joins
+`rag_videos`, so these rows are never candidates and their `content_kind` can
+never be anything but NULL. The gate keeps NULL on the deliberate principle that
+unclassified is not a verdict -- right for a real video nobody has looked at,
+wrong for a row the classifier structurally cannot reach.
+
+Tracked as an open item under Phase 5 Tier 1, with the fix stated as separating
+`unclassifiable` from `unclassified` in the filter rather than widening the
+classifier. **Not built**: it changes deployed retrieval behaviour and this repo's
+own standard is to measure that before shipping it.
+
+### Verified
+
+`npm test` 76; `smoke-test.ts` 60; `search-test.ts` 36; `test-alerting.sh` 35;
+`verify-reader-role.sh --live` green; `npm run typecheck` and
+`npx eslint mcp src tests` clean.
