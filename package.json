@@ -49,13 +49,13 @@
     "@langchain/openai": "^1.5.5",
     "@langfuse/langchain": "^5.9.1",
     "@langfuse/otel": "^5.9.1",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/sdk-trace-node": "^2.9.0",
     "@supabase/supabase-js": "^2.103.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",
-    "next": "^16.2.10",
+    "next": "^16.4.5",
     "openai": "^6.34.0",
     "pg": "^8.22.0",
     "react": "19.2.4",
@@ -76,7 +76,7 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "postcss": "8.5.10"
+    "postcss": "^8.5.23"
   },
   "type": "module"
 }
