@@ -10,7 +10,7 @@ this changes the local dev server.
 | Public compare | `instructors.zencub.com` | 3420 | `instructors` | `.next-instructors` |
 | Full demo | `demo.zencub.com` | 3419 | `full` | `.next-demo` |
 | MCP retrieval | loopback only, `127.0.0.1:3421` | 3421 | `mcp` | `.next-mcp` |
-| Local dev | `mac-studio.rove-porgy.ts.net:3417` | 3417 | `full` | `.next` |
+| Local dev | `<dev-host>:3417` (private tailnet host) | 3417 | `full` | `.next` |
 
 The mcp surface serves `/api/rag/retrieve` only (the app's real retrieval
 pipeline, stopping before answer generation) for the [MCP server](../mcp/README.md);
