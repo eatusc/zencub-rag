@@ -743,30 +743,21 @@ Correctly, it failed safe: the branch guard runs before anything is touched, and
 the deploy.
 
 **The first fix proposed was wrong, and Eric caught it.** The plan was to reuse
-`amzdash/scripts/notify-telegram.sh`, which sources `~/.hermes/.env`. Every
-`TELEGRAM_*` line in that file is **commented out**; sourcing it yields
-`TELEGRAM_BOT_TOKEN=[UNSET]` and `TELEGRAM_HOME_CHANNEL=[UNSET]`, so the script
-hits its own guard and sends nothing. The check that "verified" the credentials
-was `grep -c TELEGRAM_BOT_TOKEN`, which returned 4 by counting commented lines.
-A cheap check producing a confident wrong reading, which is the same failure
-class this project keeps finding in the tools themselves.
-
-**Consequence outside this repo, recorded not fixed:**
-`amzdash/scripts/daily-pull.sh:117,140` still calls that notifier, including for
-"pipeline failed twice". That alerting path is dead today.
-
-The live outbound path is `~/code/cladia/.env` with `CLADIA_BOT_TOKEN` and
-`CLADIA_ALLOWED_USERS`, both uncommented, which is what
-`sys_docs/scripts/jobs_audit.py:304` sends through and what the standing rule
-means by Cladia's bot.
+an existing Telegram notifier from another project. Its credentials file had
+every Telegram line commented out, so the script hit its own guard and sent
+nothing. The check that "verified" the credentials was a `grep -c` for the
+token name, which returned a non-zero count by matching the commented lines. A
+cheap check producing a confident wrong reading, which is the same failure class
+this project keeps finding in the tools themselves. The notifier here uses the
+machine's working alert bot instead.
 
 ### Built
 
 - `scripts/deploy/notify.sh` - curl-only page. No node, no python, no model, no
   dependency on the app or database, so the alerting path shares no failure mode
   with the build it reports on. Reads the two keys with `sed` rather than
-  sourcing, because sourcing an unknown file executes it and `~/.hermes/.env`
-  already errors on a stray Chrome path. Never echoes the token, including on
+  sourcing, because sourcing an unknown file executes it and the shared
+  credentials file already errors on a stray line. Never echoes the token, including on
   error paths: this repo is public.
 - `scripts/deploy/autodeploy.sh` - pages on failure and on recovery, carrying
   the last 12 lines of the deploy's own output so the page says why. Throttled
