@@ -50,8 +50,8 @@ export function UnlockForm() {
 
           <h1 className="text-xl font-semibold tracking-tight">ZenCub RAG</h1>
           <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
-            This is the full engineering demo: LangGraph workflows, instructor
-            comparison, and trace inspection. Enter the PIN to continue.
+            Internal console: LangGraph workflows, instructor comparison, and
+            trace inspection. Enter the PIN to continue.
           </p>
 
           <form onSubmit={submit} className="mt-6 space-y-3">

@@ -1,6 +1,6 @@
 # LangGraph Test Plan
 
-This plan turns the existing Classic-versus-LangGraph demo into a repeatable durability, safety, and evaluation project. The `Lang Tests` tab exposes the working baseline and the acceptance criteria for each phase. Phases 1 through 4, including authorized checkpoint replay/time travel, are implemented; Phase 5 evaluation remains next.
+This plan defines the durability, safety, and evaluation tests for the Classic and LangGraph answer paths. The `Lang Tests` tab exposes the working baseline and the acceptance criteria for each phase. Phases 1 through 4, including authorized checkpoint replay/time travel, are implemented; Phase 5 evaluation remains next.
 
 ## Current Baseline
 

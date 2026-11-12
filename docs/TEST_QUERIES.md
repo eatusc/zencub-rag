@@ -7,7 +7,6 @@ Good test queries for the current text-search build. These are not just UI examp
 - `crossface`
 - `underhook half guard`
 - `guard retention`
-- `heel hook escape`
 - `single leg x`
 - `kimura trap`
 - `body lock pass`
@@ -22,5 +21,7 @@ Good test queries for the current text-search build. These are not just UI examp
 - `closed guard pass`
 - `bow and arrow choke`
 - `omoplata`
+
+`heel hook escape` is not in this set. It is a regression check for the Ask path, where vector retrieval once matched back-control "hook escape" chunks and returned no citations; see the 2026-07-07 entries in [DEVLOG.md](DEVLOG.md).
 
 Latest generated report: [evals/rag-search-eval.md](evals/rag-search-eval.md).

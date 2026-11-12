@@ -13,18 +13,26 @@ ZenCub RAG answers questions about a BJJ (Brazilian Jiu-Jitsu) video library wit
 - [instructors.zencub.com](https://instructors.zencub.com) is the public
   Instructor Compare app: one question, one button, and the LangGraph workflow
   running live while you watch it fan out and converge.
-- [demo.zencub.com](https://demo.zencub.com) is the full engineering demo behind
-  a PIN, with the LangGraph labs, checkpoint replay, and Langfuse traces.
+- [demo.zencub.com](https://demo.zencub.com) is the PIN-gated internal console:
+  every tab, including LangGraph workflow controls, checkpoint replay, and
+  Langfuse traces.
 
 All three are served from one codebase; see
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+**Content and privacy.** The shared index holds transcripts of publicly
+available YouTube instructional videos. Every answer cites the clip it came
+from and links back to the original video on YouTube, so viewers land on the
+creator's own channel. Videos people add in the ZenCub app are private to that
+user and are never mixed into this shared index (see the privacy rule in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
 
 ## Engineering highlights
 
 - Strict TypeScript with zero `any` across roughly 8,800 lines of application code; `tsc --noEmit` runs in CI.
 - LangGraph workflows on a Postgres checkpointer: `interrupt()`-based human approval gates, checkpoint cloning into separate branch threads for model experiments, and selective branch recovery backed by a server-only idempotency cache so only failed branches re-execute.
 - Capability tokens for checkpoint replay are stored only as SHA-256 hashes; the checkpoint API requires the capability, never enumerates threads, and redacts private state.
-- Committed retrieval eval reports in [docs/evals/](docs/evals/), currently 19/19 passing.
+- Committed retrieval eval reports in [docs/evals/](docs/evals/): 19 queries, all passing in the latest report.
 
 ## What it does
 
@@ -41,7 +49,7 @@ The home page has six tabs:
 - `In App Experience`: answer-first presentation using the same server-side providers
 - `Instructor Compare`: guided multi-instructor research with evidence loops, clip review pauses, recovery, and model-experiment branches
 - `System Map`: visual explanation of the RAG data flow and table roles
-- `Lang Tests`: live Classic versus LangGraph comparisons, approval and recovery labs, and authorized checkpoint timeline/replay controls
+- `Lang Tests`: live Classic versus LangGraph comparisons, approval and recovery tests, and authorized checkpoint timeline/replay controls
 - `Langfuse`: recent LLM traces (latency, cost, LangGraph node tree) from a self-hosted Langfuse instance
 
 | Search | System Map |
@@ -106,7 +114,7 @@ npm test            # vitest unit tests for the retrieval helpers
 npm run eval:queries
 ```
 
-`eval:queries` runs 20 BJJ queries (listed in [docs/TEST_QUERIES.md](docs/TEST_QUERIES.md)) through the live `/api/rag/search` API and checks result counts, expected terms, citations, and source URLs. The latest committed report is [docs/evals/rag-search-eval.md](docs/evals/rag-search-eval.md).
+`eval:queries` runs the 19 BJJ queries in `src/lib/ragExamples.ts` (listed in [docs/TEST_QUERIES.md](docs/TEST_QUERIES.md)) through the live `/api/rag/search` API and checks result counts, expected terms, citations, and source URLs. The latest committed report is [docs/evals/rag-search-eval.md](docs/evals/rag-search-eval.md).
 
 LangGraph acceptance tests (persistence across restarts, approval, recovery, replay, instructor compare) are described in [docs/LANGGRAPH_TEST_PLAN.md](docs/LANGGRAPH_TEST_PLAN.md) and run through the `npm run test:langgraph-*` and `npm run test:instructor-compare` scripts against a local dev server. The integration scripts target `http://localhost:3000` by default; set `RAG_BASE_URL` to point elsewhere.
 
@@ -115,7 +123,7 @@ LangGraph acceptance tests (persistence across restarts, approval, recovery, rep
 ## More documentation
 
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Deployment (public search host and PIN-gated demo host): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- Deployment (public hosts and the PIN-gated internal host): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - How the RAG pipeline works: [docs/RAG_TECHNOLOGY.md](docs/RAG_TECHNOLOGY.md)
 - Bring your own database: [docs/BRING_YOUR_OWN_DATABASE.md](docs/BRING_YOUR_OWN_DATABASE.md)
 - LangGraph test plan: [docs/LANGGRAPH_TEST_PLAN.md](docs/LANGGRAPH_TEST_PLAN.md)
