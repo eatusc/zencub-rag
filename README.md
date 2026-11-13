@@ -29,7 +29,7 @@ user and are never mixed into this shared index (see the privacy rule in
 
 ## Engineering highlights
 
-- Strict TypeScript with zero `any` across roughly 8,800 lines of application code; `tsc --noEmit` runs in CI.
+- Strict TypeScript with zero `any` across roughly 12,000 lines of application code; `tsc --noEmit` runs in CI.
 - LangGraph workflows on a Postgres checkpointer: `interrupt()`-based human approval gates, checkpoint cloning into separate branch threads for model experiments, and selective branch recovery backed by a server-only idempotency cache so only failed branches re-execute.
 - Capability tokens for checkpoint replay are stored only as SHA-256 hashes; the checkpoint API requires the capability, never enumerates threads, and redacts private state.
 - Committed retrieval eval reports in [docs/evals/](docs/evals/): 19 queries, all passing in the latest report.
