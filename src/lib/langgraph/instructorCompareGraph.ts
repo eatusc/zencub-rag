@@ -9,6 +9,7 @@ import {
   type CanonicalInstructor,
 } from "@/lib/instructorComparison";
 import { getLangGraphCheckpointer } from "@/lib/langgraph/checkpointer";
+import { semanticRetrievalFor } from "@/lib/compareRetrievalPolicy";
 import { canRefineComparison } from "@/lib/langgraph/refinementPolicy";
 import { langfuseCallbacks } from "@/lib/langfuseHandler";
 import { claimFailureInjection, logRecoveryExecution } from "@/lib/langgraph/testEvents";
@@ -211,11 +212,12 @@ function ids(value: unknown, allowed?: Set<number>): number[] {
 
 async function vectorBranch(state: RetrievalStateType): Promise<Partial<RetrievalStateType>> {
   const startedAt = performance.now();
-  if (state.selectedProvider === "qwen") {
-    return { vector: [], trace: [trace("compare_vector", "Semantic retrieval", "disabled in zero-paid Local Qwen mode; no OpenAI embedding call", startedAt)] };
-  }
   const env = getServerEnv();
-  const openai = env.openaiApiKey ? openaiFor(env) : null;
+  const semantic = semanticRetrievalFor(state.selectedProvider, { localSemantic: env.ragCompareLocalSemantic, hasOpenAiKey: Boolean(env.openaiApiKey) });
+  if (!semantic.enabled) {
+    return { vector: [], trace: [trace("compare_vector", "Semantic retrieval", `disabled: ${semantic.reason}`, startedAt)] };
+  }
+  const openai = openaiFor(env);
   try {
     const rows = filterDegenerate(await vectorResults(state.query, COMPARISON_CANDIDATE_LIMIT, openai, env));
     return { vector: rows, trace: [trace("compare_vector", "Semantic retrieval", `${rows.length} candidates`, startedAt)] };

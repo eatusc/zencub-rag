@@ -300,7 +300,7 @@ export function InstructorCompare({ providers }: { providers: ProviderInfo[] }) 
               </button>;
             })}
           </div>
-          <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Qwen3 235B is the quality default. Local Qwen remains the zero-paid option: semantic OpenAI embeddings are disabled, and retrieval uses database keyword + technique metadata. Every result reports the exact model, elapsed time, and model-reported tokens.</p>
+          <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Qwen3 235B is the quality default. Local Qwen runs every model step on the Mac Studio; retrieval still embeds the query once with OpenAI (about $0.00002) so vector search can run alongside keyword + technique metadata. Every result reports the exact model, elapsed time, and model-reported tokens.</p>
         </div>
         <form onSubmit={runComparison}>
           <label htmlFor="instructor-compare-query" className="text-xs font-black uppercase tracking-wider text-muted-foreground">What position or problem should instructors be compared on?</label>
@@ -433,7 +433,7 @@ function ComparisonResult({ result }: { result: RagInstructorCompareResponse }) 
       <section className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><div className="flex flex-wrap items-center gap-2"><p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Grounded comparison</p>{result.session?.parent_thread_id && <span className="rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[9px] font-black text-violet-700">EXPERIMENT BRANCH</span>}</div><h2 className="mt-1 text-xl font-bold">{result.comparison.topic}</h2>{result.session?.parent_thread_id && <p className="mt-1 font-mono text-[9px] text-violet-700">branched from original {result.session.parent_thread_id}</p>}</div>
-          <div className="text-right"><span className="rounded-full border border-emerald-200 bg-card px-3 py-1 text-[10px] font-bold text-emerald-700">{result.model}</span><p className="mt-1.5 text-[9px] font-bold text-emerald-800/70">{result.zero_paid_model_mode ? "Zero paid model calls" : result.provider === "openrouter" ? "OpenRouter API" : "OpenAI API"}</p></div>
+          <div className="text-right"><span className="rounded-full border border-emerald-200 bg-card px-3 py-1 text-[10px] font-bold text-emerald-700">{result.model}</span><p className="mt-1.5 text-[9px] font-bold text-emerald-800/70">{result.zero_paid_model_mode ? "Zero paid model calls" : result.provider === "qwen" ? "Local Qwen + OpenAI query embedding" : result.provider === "openrouter" ? "OpenRouter API" : "OpenAI API"}</p></div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
           <Metric value={String(result.instructor_count)} label="instructors" />
@@ -445,7 +445,7 @@ function ComparisonResult({ result }: { result: RagInstructorCompareResponse }) 
         </div>
         {result.quality && <div className="mt-3 grid gap-2 sm:grid-cols-3"><ModelStage label="Quality gate" value={`${result.quality.score}% claim verification · ${result.quality.passed ? "passed" : "completed with disclosed gaps"}`} /><ModelStage label="Adaptive retrieval" value={result.quality.refinement_rounds ? `${result.quality.refinement_rounds} targeted refinement round${result.quality.refinement_rounds === 1 ? "" : "s"}` : "Initial evidence passed; no loop needed"} /><ModelStage label="Research session" value={`turn ${result.session?.turn_index ?? 1} · ${result.session?.reused_evidence_count ?? 0} prior clips reused`} /></div>}
         <div className="mt-3 grid gap-1.5 text-[9px] sm:grid-cols-2">
-          <ModelStage label="Semantic retrieval" value={result.models.semantic_embedding ? `${result.models.semantic_embedding} → pgvector (embedding tokens not included below)` : "Disabled in zero-paid local mode"} />
+          <ModelStage label="Semantic retrieval" value={result.models.semantic_embedding ? `${result.models.semantic_embedding} → pgvector (embedding tokens not included below)` : "Disabled (see trace)"} />
           <ModelStage label="Evidence reranker" value={result.models.evidence_reranker ?? "Not invoked; attributed panel was already within the ranking limit"} />
           <ModelStage label="Instructor branches" value={result.models.instructor_analysis} />
           <ModelStage label="Final synthesis" value={result.models.synthesis} />
@@ -559,7 +559,7 @@ function TraceRow({ entry, compact = false, technology }: { entry: RagGraphTrace
 function traceTechnology(node: string, result: RagInstructorCompareResponse): string {
   if (node === "compare_keyword") return "Postgres full-text search; no language model";
   if (node === "compare_metadata") return "Supabase rag_techniques metadata query; no language model";
-  if (node === "compare_vector") return result.models.semantic_embedding ? `OpenAI ${result.models.semantic_embedding} query embedding + pgvector similarity search` : "Disabled in Local Qwen zero-paid mode; no embedding model called";
+  if (node === "compare_vector") return result.models.semantic_embedding ? `OpenAI ${result.models.semantic_embedding} query embedding + pgvector similarity search` : "Disabled; no embedding model called (see trace detail)";
   if (node === "compare_fuse") return "Deterministic Reciprocal Rank Fusion and per-video diversity; no language model";
   if (node === "compare_attribute") return "rag_videos → rag_video_attributions → canonical person in rag_creators; no language model";
   if (node === "compare_panel") return result.models.evidence_reranker

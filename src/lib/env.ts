@@ -12,6 +12,7 @@ type ServerEnv = {
   ragRerankModel: string;
   ragRerankEnabled: boolean;
   ragCompareMaxRefinementRounds: number;
+  ragCompareLocalSemantic: boolean;
   ragQwenBaseUrl: string;
   ragQwenModel: string;
   ragOpenRouterBaseUrl: string;
@@ -58,6 +59,8 @@ export function getServerEnv(): ServerEnv {
     ragCompareMaxRefinementRounds: parseComparisonRefinementRounds(
       process.env.RAG_COMPARE_MAX_REFINEMENT_ROUNDS,
     ),
+    // Vector retrieval for Local Qwen comparisons; "off" means strict zero-paid mode.
+    ragCompareLocalSemantic: process.env.RAG_COMPARE_LOCAL_SEMANTIC !== "off",
     // Local Qwen served by Ollama's OpenAI-compatible endpoint on the Mac Studio.
     ragQwenBaseUrl: process.env.RAG_QWEN_BASE_URL ?? "http://localhost:11434/v1",
     ragQwenModel: process.env.RAG_QWEN_MODEL ?? "qwen3.6:35b-mlx",

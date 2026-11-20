@@ -1,3 +1,4 @@
+import { isZeroPaidRun, semanticRetrievalFor } from "@/lib/compareRetrievalPolicy";
 import { NextRequest, NextResponse } from "next/server";
 import { probeQwen, providerModel } from "@/lib/answerProviders";
 import { getServerEnv } from "@/lib/env";
@@ -71,6 +72,7 @@ function fullResponse(input: {
 }): RagInstructorCompareResponse {
   const env = getServerEnv();
   const model = providerModel(input.provider, env);
+  const semantic = semanticRetrievalFor(input.provider, { localSemantic: env.ragCompareLocalSemantic, hasOpenAiKey: Boolean(env.openaiApiKey) });
   return {
     query: input.query,
     engine: "langgraph",
@@ -79,13 +81,13 @@ function fullResponse(input: {
     provider: input.provider,
     model,
     models: {
-      semantic_embedding: input.provider === "qwen" ? null : env.openaiApiKey ? env.ragEmbeddingModel : null,
+      semantic_embedding: semantic.enabled ? env.ragEmbeddingModel : null,
       evidence_reranker: input.result.rerank_applied ? model : null,
       instructor_analysis: model,
       synthesis: model,
       claim_verifier: model,
     },
-    zero_paid_model_mode: input.provider === "qwen",
+    zero_paid_model_mode: isZeroPaidRun(input.provider, semantic),
     ...input.result,
     total_ms: input.totalMs,
   };
