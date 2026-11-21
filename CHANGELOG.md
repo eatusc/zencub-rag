@@ -2,6 +2,16 @@
 
 Notable changes to this project. Routine fixes and refactors are not listed.
 
+## 2026-11-20
+
+### Changed
+- Local Qwen Instructor Compare runs now do vector retrieval too. They used to
+  skip the query embedding to stay zero-paid, which silently made every Local
+  Qwen comparison keyword and metadata only. The query embedding (about
+  $0.00002 per run, `text-embedding-3-small` to match the stored chunks) means
+  these runs now need `OPENAI_API_KEY`; a missing key is reported in the trace.
+  Set `RAG_COMPARE_LOCAL_SEMANTIC=off` to restore strict zero-paid mode.
+
 ## 2026-08-28
 
 ### Added
