@@ -77,6 +77,7 @@ export function isInstructorsPagePath(pathname: string): boolean {
 // That, not a header check, is what keeps it private.
 export const MCP_API_ROUTES = [
   "/api/health",
+  "/api/health/retrieval",
   "/api/rag/retrieve",
 ] as const;
 

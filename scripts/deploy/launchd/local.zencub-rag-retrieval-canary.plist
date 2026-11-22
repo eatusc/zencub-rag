@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Description: Every 5 minutes, runs a real vector search through the loopback MCP surface and pages Telegram after two failures in a row, because hybrid search hides a vector outage behind keyword results and /api/health stays green. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.zencub-rag-retrieval-canary</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/elai/code/zencub-rag/scripts/deploy/check-retrieval.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/elai/code/zencub-rag</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/elai/Library/Logs/zencub-rag/retrieval-canary.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/elai/Library/Logs/zencub-rag/retrieval-canary.log</string>
+</dict>
+</plist>
