@@ -2,6 +2,19 @@
 
 Notable changes to this project. Routine fixes and refactors are not listed.
 
+## 2026-11-22
+
+### Added
+- A retrieval canary pages when vector search stops working. Hybrid search
+  falls back to keyword results when the embedding call fails, and
+  `/api/health` only counts rows, so a revoked OpenAI key could go unnoticed
+  for weeks. The launchd job `local.zencub-rag-retrieval-canary` (every 5
+  minutes, script `scripts/deploy/check-retrieval.sh`) calls the new
+  loopback-only `/api/health/retrieval` on the `APP_MODE=mcp` surface (port
+  3421), which runs a real embedding and vector search, and pages after two
+  failures in a row. The endpoint returns 404 in every other app mode. The job
+  needs installing like the other launchd jobs in `scripts/deploy/launchd/`.
+
 ## 2026-11-20
 
 ### Changed
