@@ -2,6 +2,19 @@
 
 Notable changes to this project. Routine fixes and refactors are not listed.
 
+## 2026-11-23
+
+### Changed
+- Ask follow-ups now give each retriever its own query. Before, every prior
+  question was joined into one string for both retrievers, so keyword search
+  (which ANDs every stem) matched about one chunk and the vector query blurred
+  toward the first topic. A small rewrite call now turns a follow-up into a
+  standalone sentence for vector search and a keyword phrase of at most 6 words
+  for keyword search. Any rewrite failure, timeout, or off-topic rewrite falls
+  back to the old joined query. Keyword matching uses OR semantics, so the
+  migration `docs/migrations/2026-11-23-rag-keyword-any.sql` must be applied to
+  the database.
+
 ## 2026-11-22
 
 ### Added
