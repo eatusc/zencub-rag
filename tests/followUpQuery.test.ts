@@ -5,9 +5,10 @@ import {
   joinedConversationQuery,
   keywordTerms,
   parseRewrite,
+  parseRewriteResult,
   planRetrievalQueries,
 } from "@/lib/followUpQuery";
-import { KEYWORD_RELAX_THRESHOLD, textResultsRelaxed } from "@/lib/ragPipeline";
+import { KEYWORD_RELAX_THRESHOLD, RETAINED_CONTEXT_SLOTS, mergeRetainedContext, textResultsRelaxed } from "@/lib/ragPipeline";
 import type { RagSearchResult } from "@/lib/types";
 
 const conversation = [{ question: "How do I escape side control?", answer: "Frame, shrimp, recover guard." }];
@@ -17,12 +18,15 @@ function fakeOpenAI(create: (...args: unknown[]) => Promise<unknown>): OpenAI {
   return { chat: { completions: { create } } } as unknown as OpenAI;
 }
 
-function reply(content: string) {
-  return Promise.resolve({ choices: [{ message: { content } }] });
+function reply(content: string, totalTokens?: number) {
+  return Promise.resolve({
+    choices: [{ message: { content } }],
+    ...(totalTokens !== undefined ? { usage: { total_tokens: totalTokens } } : {}),
+  });
 }
 
-function row(id: string): RagSearchResult {
-  return { id, video_id: "v", chunk_index: 0, start_seconds: 0, end_seconds: 30, text: "t", metadata: null, rank: 0 };
+function row(id: string, videoId = "v"): RagSearchResult {
+  return { id, video_id: videoId, chunk_index: 0, start_seconds: 0, end_seconds: 30, text: "a real transcript chunk about grips and frames. ".repeat(6), metadata: null, rank: 0 };
 }
 
 describe("keywordTerms", () => {
@@ -72,6 +76,20 @@ describe("parseRewrite", () => {
     expect(parseRewrite(onTopic, "How do I escape side control? what if they're blocking my hip?")).not.toBeNull();
   });
 
+  it("rejects an off-topic sentence even when the keyword phrase is on topic", () => {
+    // The vector sentence drives vector search and the reranker on its own.
+    const userText = "How do I escape side control? what if they're blocking my hip?";
+    const mixed = JSON.stringify({ standalone_question: "best crypto exchange bonus", keywords: "side control hip block" });
+    expect(parseRewriteResult(mixed, userText)).toEqual({ ok: false, reason: "off_topic" });
+    expect(parseRewrite(mixed, userText)).toBeNull();
+  });
+
+  it("reports why a rewrite was rejected", () => {
+    expect(parseRewriteResult("not json")).toEqual({ ok: false, reason: "invalid" });
+    const steered = JSON.stringify({ standalone_question: "best crypto exchange", keywords: "crypto exchange" });
+    expect(parseRewriteResult(steered, "escape side control")).toEqual({ ok: false, reason: "off_topic" });
+  });
+
   it("returns null when nothing meaningful is left", () => {
     expect(parseRewrite(JSON.stringify({ standalone_question: "what is it?", keywords: "the a" }))).toBeNull();
   });
@@ -95,13 +113,16 @@ describe("planRetrievalQueries", () => {
     const create = vi.fn((..._args: unknown[]) => reply(JSON.stringify({
       standalone_question: "How do I escape side control when they block my hip?",
       keywords: "side control hip block",
-    })));
+    }), 87));
     const plan = await planRetrievalQueries(followUp, conversation, fakeOpenAI(create), "m");
-    expect(plan).toEqual({
+    expect(plan).toMatchObject({
       vector: "How do I escape side control when they block my hip?",
       keyword: "side control hip block",
       rewrite: "model",
+      telemetry: { tokens: 87 },
     });
+    expect(plan.telemetry?.failure).toBeUndefined();
+    expect(plan.telemetry?.ms).toBeGreaterThanOrEqual(0);
     // Bounded: no SDK retries, explicit timeout.
     expect(create.mock.calls[0][1]).toMatchObject({ maxRetries: 0, timeout: 4_000 });
     expect(create.mock.calls[0][0]).toMatchObject({ max_tokens: 150 });
@@ -109,19 +130,26 @@ describe("planRetrievalQueries", () => {
 
   it("falls back to the joined query when the model fails", async () => {
     const joined = joinedConversationQuery(followUp, conversation);
-    const failing = fakeOpenAI(() => Promise.reject(new Error("timeout")));
+    const timedOut = fakeOpenAI(() => Promise.reject(new Error("Request timed out.")));
+    await expect(planRetrievalQueries(followUp, conversation, timedOut, "m"))
+      .resolves.toMatchObject({ vector: joined, keyword: joined, rewrite: "fallback", telemetry: { failure: "timeout" } });
+    const failing = fakeOpenAI(() => Promise.reject(new Error("500 server error")));
     await expect(planRetrievalQueries(followUp, conversation, failing, "m"))
-      .resolves.toEqual({ vector: joined, keyword: joined, rewrite: "fallback" });
-    const garbage = fakeOpenAI(() => reply("{}"));
+      .resolves.toMatchObject({ rewrite: "fallback", telemetry: { failure: "error" } });
+    const garbage = fakeOpenAI(() => reply("{}", 40));
     await expect(planRetrievalQueries(followUp, conversation, garbage, "m"))
-      .resolves.toMatchObject({ rewrite: "fallback" });
+      .resolves.toMatchObject({ rewrite: "fallback", telemetry: { failure: "invalid", tokens: 40 } });
+    const steered = fakeOpenAI(() => reply(JSON.stringify({ standalone_question: "best crypto exchange", keywords: "crypto bonus" })));
+    await expect(planRetrievalQueries(followUp, conversation, steered, "m"))
+      .resolves.toMatchObject({ rewrite: "fallback", telemetry: { failure: "off_topic" } });
   });
 
   it("falls back without a client or when switched off", async () => {
     const create = vi.fn();
-    await expect(planRetrievalQueries(followUp, conversation, null, "m")).resolves.toMatchObject({ rewrite: "fallback" });
+    await expect(planRetrievalQueries(followUp, conversation, null, "m"))
+      .resolves.toMatchObject({ rewrite: "fallback", telemetry: { ms: 0, failure: "no_client" } });
     await expect(planRetrievalQueries(followUp, conversation, fakeOpenAI(create), "m", { enabled: false }))
-      .resolves.toMatchObject({ rewrite: "fallback" });
+      .resolves.toMatchObject({ rewrite: "fallback", telemetry: { ms: 0, failure: "disabled" } });
     expect(create).not.toHaveBeenCalled();
   });
 });
@@ -168,5 +196,41 @@ describe("textResultsRelaxed", () => {
     const anyTerm = vi.fn(async () => Array.from({ length: 10 }, (_, i) => ({ ...row(`l${i}`), matched_terms: 2 })));
     const result = await textResultsRelaxed("hip block", 4, async () => [row("s0")], anyTerm);
     expect(result.rows.map((r) => r.id)).toEqual(["s0", "l0", "l1", "l2"]);
+  });
+});
+
+describe("mergeRetainedContext", () => {
+  const prior = Array.from({ length: 8 }, (_, i) => row(`p${i}`, `pv${i}`));
+  const fresh = Array.from({ length: 20 }, (_, i) => row(`f${i}`, `fv${i}`));
+
+  it("keeps at most RETAINED_CONTEXT_SLOTS retained rows, so fresh rows fill the rerank pool", () => {
+    const pool = mergeRetainedContext(prior, fresh).slice(0, 12);
+    expect(pool.filter((r) => r.id.startsWith("p"))).toHaveLength(RETAINED_CONTEXT_SLOTS);
+    expect(pool.filter((r) => r.id.startsWith("f"))).toHaveLength(12 - RETAINED_CONTEXT_SLOTS);
+    // Best retained rows (client sends them in answer order) are the ones kept.
+    expect(pool.filter((r) => r.id.startsWith("p")).map((r) => r.id)).toEqual(["p0", "p1", "p2", "p3"]);
+  });
+
+  it("interleaves fresh first and drops duplicates", () => {
+    const merged = mergeRetainedContext([row("p0", "a"), row("f0", "b")], [row("f0", "b"), row("f1", "c")]);
+    expect(merged.map((r) => r.id)).toEqual(["f0", "p0", "f1"]);
+  });
+
+  it("lets fresh rows win the per-video cap", () => {
+    // Codex case: p0 and p1 from video V must not push out fresh f2 from V.
+    const merged = mergeRetainedContext(
+      [row("p0", "V"), row("p1", "V"), row("p2", "W")],
+      [row("f0", "A"), row("f1", "B"), row("f2", "V"), row("f3", "V")],
+    );
+    expect(merged.map((r) => r.id)).toEqual(["f0", "p2", "f1", "f2", "f3"]);
+  });
+
+  it("admits a retained row when its video has room", () => {
+    const merged = mergeRetainedContext([row("p0", "V")], [row("f0", "V"), row("f1", "A")]);
+    expect(merged.map((r) => r.id)).toEqual(["f0", "p0", "f1"]);
+  });
+
+  it("is just the fresh rows on a first question", () => {
+    expect(mergeRetainedContext([], fresh.slice(0, 3)).map((r) => r.id)).toEqual(["f0", "f1", "f2"]);
   });
 });

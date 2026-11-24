@@ -2,18 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateAnswer, openaiFor, probeQwen, providerModel } from "@/lib/answerProviders";
 import { isPublicMode, publicAskProvider } from "@/lib/appMode";
 import { getServerEnv } from "@/lib/env";
-import { planRetrievalQueries, type QueryRewrite } from "@/lib/followUpQuery";
+import { planRetrievalQueries, type QueryRewrite, type RewriteTelemetry } from "@/lib/followUpQuery";
 import { normalizeProvider, type AnswerProvider } from "@/lib/providers";
 import {
   buildCandidates,
   contextResults,
   enrichCandidates,
+  mergeRetainedContext,
   normalizeContextIds,
   normalizeConversation,
   rerankCandidates,
-  uniqueRows,
 } from "@/lib/ragPipeline";
-import { capPerVideo, filterDegenerate } from "@/lib/ragRetrieval";
 import { validateAnswerCitations } from "@/lib/ragUtils";
 import { logSearch } from "@/lib/searchLogging";
 
@@ -45,6 +44,7 @@ export async function POST(request: NextRequest) {
   let actualProvider: AnswerProvider | undefined = requestedProvider;
   let actualRetrieval: "text" | "vector" | "hybrid" | undefined;
   let queryRewrite: QueryRewrite | undefined;
+  let rewriteTelemetry: RewriteTelemetry | undefined;
   let keywordRelaxed: boolean | undefined;
   const recordOutcome = async (outcome: {
     success: boolean;
@@ -77,6 +77,13 @@ export async function POST(request: NextRequest) {
       ...(resolvedProvider ? { resolved_provider: resolvedProvider } : {}),
       provider_fallback: Boolean(resolvedProvider && actualProvider && actualProvider !== resolvedProvider),
       ...(queryRewrite ? { query_rewrite: queryRewrite } : {}),
+      ...(rewriteTelemetry
+        ? {
+          rewrite_ms: rewriteTelemetry.ms,
+          ...(rewriteTelemetry.tokens !== undefined ? { rewrite_tokens: rewriteTelemetry.tokens } : {}),
+          ...(rewriteTelemetry.failure ? { rewrite_failure: rewriteTelemetry.failure } : {}),
+        }
+        : {}),
       ...(keywordRelaxed !== undefined ? { keyword_relaxed: keywordRelaxed } : {}),
     },
   });
@@ -137,6 +144,7 @@ export async function POST(request: NextRequest) {
       contextResults(contextIds),
     ]);
     queryRewrite = queries.rewrite;
+    rewriteTelemetry = queries.telemetry;
     const retrievalQuery = queries.vector;
     const { retrieval, rows, keywordRelaxed: relaxed } = await buildCandidates(
       queries,
@@ -146,7 +154,10 @@ export async function POST(request: NextRequest) {
     );
     keywordRelaxed = relaxed;
     actualRetrieval = retrieval === "metadata" ? "hybrid" : retrieval;
-    const candidates = capPerVideo(filterDegenerate(uniqueRows([...priorRows, ...rows])));
+    // Retained sources get at most RETAINED_CONTEXT_SLOTS places, interleaved
+    // with fresh results, so they cannot crowd fresh candidates out of the
+    // rerank pool.
+    const candidates = mergeRetainedContext(priorRows, rows);
 
     if (candidates.length === 0) {
       await recordOutcome({

@@ -21,6 +21,19 @@ export type RetrievalQueries = {
   keyword: string;
   /** "none" on a first question, "model" when rewritten, "fallback" when the rewrite was skipped or failed. */
   rewrite: QueryRewrite;
+  /** Rewrite telemetry for rag_search_logs metadata; absent on a first question. */
+  telemetry?: RewriteTelemetry;
+};
+
+/** Why a follow-up used the joined fallback instead of a model rewrite. */
+export type RewriteFailure = "disabled" | "no_client" | "timeout" | "error" | "invalid" | "off_topic";
+
+export type RewriteTelemetry = {
+  /** Wall time of the rewrite call (0 when no call was made). */
+  ms: number;
+  /** Total tokens the rewrite call used, when the API reported them. */
+  tokens?: number;
+  failure?: RewriteFailure;
 };
 
 export const REWRITE_TIMEOUT_MS = 4_000;
@@ -67,9 +80,13 @@ function sharesTopicTerm(terms: string[], context: string[]): boolean {
   return terms.some((term) => contextStems.has(stem(term)));
 }
 
+type ParsedRewrite =
+  | { ok: true; vector: string; keyword: string }
+  | { ok: false; reason: "invalid" | "off_topic" };
+
 /**
- * Validate the rewrite model's JSON. Returns null when it is unusable, which
- * makes the caller use the pre-fix joined query.
+ * Validate the rewrite model's JSON. A failure makes the caller use the
+ * pre-fix joined query.
  *
  * The keyword query is always at most MAX_KEYWORD_TERMS meaningful words: the
  * model's phrase with filler removed and truncated, or, if it gave none,
@@ -77,27 +94,41 @@ function sharesTopicTerm(terms: string[], context: string[]): boolean {
  * never sent to the strict AND keyword search.
  *
  * `context` is the user's own text (prior questions and the follow-up). When
- * given, the keyword query must share at least one topic word with it, so a
- * rewrite steered off topic (for example by instructions planted in a prior
- * answer) is rejected rather than searched.
+ * given, BOTH queries must share at least one topic word with it, so a rewrite
+ * steered off topic (for example by instructions planted in a prior answer) is
+ * rejected rather than searched. The vector sentence is checked separately
+ * because it drives vector search and the reranker on its own: an on-topic
+ * keyword phrase does not make an off-topic sentence safe (Codex post-ship
+ * review, 2026-11-23).
  */
-export function parseRewrite(content: string, context?: string): { vector: string; keyword: string } | null {
+export function parseRewriteResult(content: string, context?: string): ParsedRewrite {
   let parsed: { standalone_question?: unknown; keywords?: unknown };
   try {
     parsed = JSON.parse(content) as typeof parsed;
   } catch {
-    return null;
+    return { ok: false, reason: "invalid" };
   }
   const vector = typeof parsed.standalone_question === "string"
     ? parsed.standalone_question.replace(/\s+/g, " ").trim().slice(0, MAX_STANDALONE_CHARS)
     : "";
-  if (vector.length < 2) return null;
+  if (vector.length < 2) return { ok: false, reason: "invalid" };
 
   const fromModel = typeof parsed.keywords === "string" ? meaningfulTerms(parsed.keywords) : [];
   const terms = (fromModel.length > 0 ? fromModel : meaningfulTerms(vector)).slice(0, MAX_KEYWORD_TERMS);
-  if (terms.length === 0) return null;
-  if (context !== undefined && !sharesTopicTerm(terms, meaningfulTerms(context))) return null;
-  return { vector, keyword: terms.join(" ") };
+  if (terms.length === 0) return { ok: false, reason: "invalid" };
+  if (context !== undefined) {
+    const contextTerms = meaningfulTerms(context);
+    if (!sharesTopicTerm(terms, contextTerms) || !sharesTopicTerm(meaningfulTerms(vector), contextTerms)) {
+      return { ok: false, reason: "off_topic" };
+    }
+  }
+  return { ok: true, vector, keyword: terms.join(" ") };
+}
+
+/** parseRewriteResult without the reason: the two queries, or null. */
+export function parseRewrite(content: string, context?: string): { vector: string; keyword: string } | null {
+  const result = parseRewriteResult(content, context);
+  return result.ok ? { vector: result.vector, keyword: result.keyword } : null;
 }
 
 export const REWRITE_SYSTEM_PROMPT = [
@@ -130,9 +161,17 @@ export async function planRetrievalQueries(
   if (conversation.length === 0) return { vector: query, keyword: query, rewrite: "none" };
 
   const joined = joinedConversationQuery(query, conversation);
-  const fallback: RetrievalQueries = { vector: joined, keyword: joined, rewrite: "fallback" };
-  if (!openai || options.enabled === false) return fallback;
+  const fallback = (failure: RewriteFailure, ms = 0, tokens?: number): RetrievalQueries => ({
+    vector: joined,
+    keyword: joined,
+    rewrite: "fallback",
+    telemetry: { ms, ...(tokens !== undefined ? { tokens } : {}), failure },
+  });
+  if (options.enabled === false) return fallback("disabled");
+  if (!openai) return fallback("no_client");
 
+  const startedAt = performance.now();
+  const elapsed = () => Math.round(performance.now() - startedAt);
   try {
     const completion = await openai.chat.completions.create(
       {
@@ -159,10 +198,20 @@ export async function planRetrievalQueries(
       },
       { timeout: options.timeoutMs ?? REWRITE_TIMEOUT_MS, maxRetries: 0 },
     );
+    const ms = elapsed();
+    const tokens = completion.usage?.total_tokens;
     const userText = [...conversation.map((turn) => turn.question), query].join(" ");
-    const rewrite = parseRewrite(completion.choices[0]?.message.content ?? "", userText);
-    return rewrite ? { ...rewrite, rewrite: "model" } : fallback;
-  } catch {
-    return fallback;
+    const parsed = parseRewriteResult(completion.choices[0]?.message.content ?? "", userText);
+    if (!parsed.ok) return fallback(parsed.reason, ms, tokens);
+    return {
+      vector: parsed.vector,
+      keyword: parsed.keyword,
+      rewrite: "model",
+      telemetry: { ms, ...(tokens !== undefined ? { tokens } : {}) },
+    };
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    const timedOut = /timeout/i.test(name) || (error instanceof Error && /timed? ?out/i.test(error.message));
+    return fallback(timedOut ? "timeout" : "error", elapsed());
   }
 }

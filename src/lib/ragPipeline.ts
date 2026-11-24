@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { getServerEnv } from "@/lib/env";
 import {
   CANDIDATE_POOL,
+  MAX_PER_VIDEO,
   RERANK_POOL,
   capPerVideo,
   enrichWithTechniques,
@@ -229,6 +230,54 @@ export async function contextResults(ids: string[]): Promise<RagSearchResult[]> 
     const row = byId.get(id);
     return row ? [{ ...row, rank: 0 }] : [];
   });
+}
+
+/**
+ * Most retained sources (the previous answer's citations) a follow-up keeps in
+ * its candidate pool. The route used to put all of them (up to 8) first, so
+ * with RERANK_POOL 12 only 4 fresh results ever reached the reranker (Codex
+ * post-ship review, 2026-11-23).
+ */
+export const RETAINED_CONTEXT_SLOTS = 4;
+
+/**
+ * Merge the previous answer's sources with this turn's fresh retrieval.
+ * Retained rows are capped at RETAINED_CONTEXT_SLOTS (best first, since the
+ * client sends them in answer order) and interleaved after fresh rows, so the
+ * rerank pool holds about 8 fresh and 4 retained candidates.
+ *
+ * Fresh rows win the per-video cap: a retained row is admitted only if its
+ * video still has room after the fresh rows that can reach the rerank pool
+ * (the first RERANK_POOL - slots). Capping the interleaved list instead would
+ * let two retained chunks of a video push out a better fresh chunk of the same
+ * video (Codex review, 2026-11-24).
+ */
+export function mergeRetainedContext(
+  prior: RagSearchResult[],
+  fresh: RagSearchResult[],
+  slots = RETAINED_CONTEXT_SLOTS,
+): RagSearchResult[] {
+  const freshRows = capPerVideo(filterDegenerate(uniqueRows(fresh)));
+  const freshIds = new Set(freshRows.map((row) => row.id));
+  const perVideo = new Map<string, number>();
+  for (const row of freshRows.slice(0, Math.max(0, RERANK_POOL - slots))) {
+    perVideo.set(row.video_id, (perVideo.get(row.video_id) ?? 0) + 1);
+  }
+  const kept: RagSearchResult[] = [];
+  for (const row of uniqueRows(filterDegenerate(prior))) {
+    if (kept.length >= slots) break;
+    if (freshIds.has(row.id)) continue;
+    const count = perVideo.get(row.video_id) ?? 0;
+    if (count >= MAX_PER_VIDEO) continue;
+    perVideo.set(row.video_id, count + 1);
+    kept.push(row);
+  }
+  const merged: RagSearchResult[] = [];
+  for (let i = 0; i < Math.max(kept.length, freshRows.length); i++) {
+    if (i < freshRows.length) merged.push(freshRows[i]);
+    if (i < kept.length) merged.push(kept[i]);
+  }
+  return merged;
 }
 
 /**
