@@ -11,6 +11,9 @@ type ServerEnv = {
   ragEmbeddingModel: string;
   ragRerankModel: string;
   ragRerankEnabled: boolean;
+  ragFollowUpRewrite: boolean;
+  ragRewriteModel: string;
+  ragKeywordRelax: boolean;
   ragCompareMaxRefinementRounds: number;
   ragCompareLocalSemantic: boolean;
   ragQwenBaseUrl: string;
@@ -56,6 +59,13 @@ export function getServerEnv(): ServerEnv {
     ragEmbeddingModel: process.env.RAG_EMBEDDING_MODEL ?? "text-embedding-3-small",
     ragRerankModel: process.env.RAG_RERANK_MODEL ?? process.env.RAG_ANALYZE_MODEL ?? "gpt-4o-mini",
     ragRerankEnabled: process.env.RAG_RERANK !== "off",
+    // Per-retriever rewrite of Ask follow-ups; "off" restores the joined query.
+    ragFollowUpRewrite: process.env.RAG_FOLLOWUP_REWRITE !== "off",
+    // Its own setting so an expensive reranker model is not silently reused.
+    ragRewriteModel: process.env.RAG_REWRITE_MODEL ?? "gpt-4o-mini",
+    // Any-term keyword relaxation for rewritten follow-ups. Off by default: on the
+    // 2026-11-23 eval it lowered P@8 (0.548 vs 0.570 rewrite alone). "on" to test.
+    ragKeywordRelax: process.env.RAG_KEYWORD_RELAX === "on",
     ragCompareMaxRefinementRounds: parseComparisonRefinementRounds(
       process.env.RAG_COMPARE_MAX_REFINEMENT_ROUNDS,
     ),

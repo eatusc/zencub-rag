@@ -9,6 +9,7 @@ import {
   rerankWithLLM,
   rrfFuse,
 } from "@/lib/ragRetrieval";
+import { keywordTerms, type RetrievalQueries } from "@/lib/followUpQuery";
 import { formatRagSource, type RagSource } from "@/lib/ragUtils";
 import { createServerSupabase } from "@/lib/supabase";
 import { refineResultTimestamps } from "@/lib/timestampRefinement";
@@ -76,6 +77,64 @@ export async function textResults(query: string, limit: number) {
   });
   if (error) throw new Error(error.message);
   return (data ?? []) as RagSearchResult[];
+}
+
+/** Below this many strict (all-words) matches, keyword search retries with OR. */
+export const KEYWORD_RELAX_THRESHOLD = 5;
+
+/** A relaxed match must contain at least this many distinct query terms (or all of them, if fewer). */
+export const KEYWORD_RELAX_MIN_TERMS = 2;
+
+/**
+ * Any-term keyword search (docs/migrations/2026-11-23-rag-keyword-any.sql).
+ * Relaxation is an enhancement, so any failure returns null and the caller
+ * keeps its strict results: a missing function (code deployed before the
+ * migration), a statement timeout, or anything else. Never fails the request.
+ */
+export async function textResultsAnyTerm(terms: string[], limit: number): Promise<RagSearchResult[] | null> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase.rpc("search_rag_transcript_chunks_any", {
+    terms,
+    match_count: limit,
+  });
+  if (error) {
+    console.warn(`[rag] keyword relaxation unavailable (${error.code ?? "unknown"}): ${error.message}`);
+    return null;
+  }
+  return (data ?? []) as (RagSearchResult & { matched_terms?: number })[];
+}
+
+type AnyTermSearch = (terms: string[], limit: number) => Promise<(RagSearchResult & { matched_terms?: number })[] | null>;
+
+/**
+ * Keyword search that relaxes AND to OR when the strict query is too narrow.
+ * The live function (plainto_tsquery) requires every stem and drops "or" as a
+ * stop word, so a long query can match nothing. Below the threshold this asks
+ * the any-term function, which ranks chunks by how many distinct terms they
+ * contain. Strict matches keep their place at the top; relaxed matches must
+ * contain at least KEYWORD_RELAX_MIN_TERMS terms so one common word ("escape")
+ * cannot flood the pool.
+ */
+export async function textResultsRelaxed(
+  query: string,
+  limit: number,
+  search: (query: string, limit: number) => Promise<RagSearchResult[]> = textResults,
+  anyTerm: AnyTermSearch = textResultsAnyTerm,
+): Promise<{ rows: RagSearchResult[]; relaxed: boolean }> {
+  const strict = await search(query, limit);
+  if (strict.length >= KEYWORD_RELAX_THRESHOLD) return { rows: strict, relaxed: false };
+
+  const terms = keywordTerms(query).slice(0, 12);
+  if (terms.length < 2) return { rows: strict, relaxed: false };
+
+  const loose = await anyTerm(terms, limit);
+  if (loose === null) return { rows: strict, relaxed: false };
+
+  const minTerms = Math.min(KEYWORD_RELAX_MIN_TERMS, terms.length);
+  const kept = loose
+    .filter((row) => (row.matched_terms ?? minTerms) >= minTerms)
+    .map(({ matched_terms: _matched, ...row }) => row);
+  return { rows: uniqueRows([...strict, ...kept]).slice(0, limit), relaxed: true };
 }
 
 const METADATA_STOP_WORDS = new Set([
@@ -172,31 +231,49 @@ export async function contextResults(ids: string[]): Promise<RagSearchResult[]> 
   });
 }
 
+/**
+ * `queries` is either one string for both retrievers (unchanged pre-fix
+ * behavior, strict keyword search) or a per-retriever plan from
+ * followUpQuery.ts: vector search gets a full sentence, keyword search a short
+ * phrase. Keyword relaxation runs only for a model-rewritten phrase and only
+ * when RAG_KEYWORD_RELAX=on. 2026-11-23 eval (19 follow-ups x 3 runs, P@8):
+ * before 0.491, rewrite 0.570, rewrite + relaxation 0.548; relaxing the joined
+ * fallback query scored 0.455. So a failed rewrite behaves exactly like the
+ * pre-fix code, and relaxation stays off until it beats the rewrite alone.
+ */
 export async function buildCandidates(
-  query: string,
+  queries: string | Pick<RetrievalQueries, "vector" | "keyword" | "rewrite">,
   requestedRetrieval: RequestedRetrieval,
   openai: OpenAI | null,
   env: ServerEnv,
-): Promise<{ retrieval: RetrievalMode; rows: RagSearchResult[] }> {
+): Promise<{ retrieval: RetrievalMode; rows: RagSearchResult[]; keywordRelaxed: boolean }> {
+  const vectorQuery = typeof queries === "string" ? queries : queries.vector;
+  const keywordQuery = typeof queries === "string" ? queries : queries.keyword;
+  const relax = env.ragKeywordRelax && typeof queries !== "string" && queries.rewrite === "model";
+  const keywordSearch = relax
+    ? (query: string, limit: number) => textResultsRelaxed(query, limit)
+    : async (query: string, limit: number) => ({ rows: await textResults(query, limit), relaxed: false });
+
   if (requestedRetrieval === "text") {
-    const rows = capPerVideo(filterDegenerate(await textResults(query, CANDIDATE_POOL)));
-    return { retrieval: "text", rows };
+    const text = await keywordSearch(keywordQuery, CANDIDATE_POOL);
+    return { retrieval: "text", rows: capPerVideo(filterDegenerate(text.rows)), keywordRelaxed: text.relaxed };
   }
   if (requestedRetrieval === "vector") {
-    const rows = capPerVideo(filterDegenerate(await vectorResults(query, CANDIDATE_POOL, openai, env)));
-    return { retrieval: "vector", rows };
+    const rows = capPerVideo(filterDegenerate(await vectorResults(vectorQuery, CANDIDATE_POOL, openai, env)));
+    return { retrieval: "vector", rows, keywordRelaxed: false };
   }
 
   const [vectorRaw, textRaw] = await Promise.all([
-    vectorResults(query, CANDIDATE_POOL, openai, env).catch(() => [] as RagSearchResult[]),
-    textResults(query, CANDIDATE_POOL),
+    vectorResults(vectorQuery, CANDIDATE_POOL, openai, env).catch(() => [] as RagSearchResult[]),
+    keywordSearch(keywordQuery, CANDIDATE_POOL),
   ]);
   const vector = filterDegenerate(vectorRaw);
-  const text = filterDegenerate(textRaw);
+  const text = filterDegenerate(textRaw.rows);
+  const keywordRelaxed = textRaw.relaxed;
 
-  if (vector.length === 0) return { retrieval: "text", rows: capPerVideo(text) };
-  if (text.length === 0) return { retrieval: "vector", rows: capPerVideo(vector) };
-  return { retrieval: "hybrid", rows: capPerVideo(rrfFuse([vector, text])) };
+  if (vector.length === 0) return { retrieval: "text", rows: capPerVideo(text), keywordRelaxed };
+  if (text.length === 0) return { retrieval: "vector", rows: capPerVideo(vector), keywordRelaxed };
+  return { retrieval: "hybrid", rows: capPerVideo(rrfFuse([vector, text])), keywordRelaxed };
 }
 
 export async function rerankCandidates(

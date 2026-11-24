@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateAnswer, openaiFor, probeQwen, providerModel } from "@/lib/answerProviders";
 import { isPublicMode, publicAskProvider } from "@/lib/appMode";
 import { getServerEnv } from "@/lib/env";
+import { planRetrievalQueries, type QueryRewrite } from "@/lib/followUpQuery";
 import { normalizeProvider, type AnswerProvider } from "@/lib/providers";
 import {
   buildCandidates,
@@ -43,6 +44,8 @@ export async function POST(request: NextRequest) {
   let resolvedProvider: AnswerProvider | undefined = requestedProvider;
   let actualProvider: AnswerProvider | undefined = requestedProvider;
   let actualRetrieval: "text" | "vector" | "hybrid" | undefined;
+  let queryRewrite: QueryRewrite | undefined;
+  let keywordRelaxed: boolean | undefined;
   const recordOutcome = async (outcome: {
     success: boolean;
     statusCode: number;
@@ -73,6 +76,8 @@ export async function POST(request: NextRequest) {
       retained_context_sources: contextIds.length,
       ...(resolvedProvider ? { resolved_provider: resolvedProvider } : {}),
       provider_fallback: Boolean(resolvedProvider && actualProvider && actualProvider !== resolvedProvider),
+      ...(queryRewrite ? { query_rewrite: queryRewrite } : {}),
+      ...(keywordRelaxed !== undefined ? { keyword_relaxed: keywordRelaxed } : {}),
     },
   });
 
@@ -125,13 +130,21 @@ export async function POST(request: NextRequest) {
     // only swaps the model that writes the final answer. Without an OpenAI key we
     // degrade to text-only search and skip reranking so local providers still work.
     const openai = hasOpenai ? openaiFor(env) : null;
-    const retrievalQuery = conversation.length > 0
-      ? [...conversation.map((turn) => turn.question), query].join(" | ").slice(0, 2_000)
-      : query;
-    const [{ retrieval, rows }, priorRows] = await Promise.all([
-      buildCandidates(retrievalQuery, openai ? requestedRetrieval : "text", openai, env),
+    // Follow-ups get one query per retriever instead of every question joined
+    // (which ANDs keyword search down to almost nothing and blurs the vector).
+    const [queries, priorRows] = await Promise.all([
+      planRetrievalQueries(query, conversation, openai, env.ragRewriteModel, { enabled: env.ragFollowUpRewrite }),
       contextResults(contextIds),
     ]);
+    queryRewrite = queries.rewrite;
+    const retrievalQuery = queries.vector;
+    const { retrieval, rows, keywordRelaxed: relaxed } = await buildCandidates(
+      queries,
+      openai ? requestedRetrieval : "text",
+      openai,
+      env,
+    );
+    keywordRelaxed = relaxed;
     actualRetrieval = retrieval === "metadata" ? "hybrid" : retrieval;
     const candidates = capPerVideo(filterDegenerate(uniqueRows([...priorRows, ...rows])));
 
